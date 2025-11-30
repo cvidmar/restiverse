@@ -1,0 +1,9 @@
+POST https://jsonplaceholder.typicode.com/posts
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Test Post",
+  "body": "This is a test post from Restiverse",
+  "userId": 1
+}
