@@ -1,0 +1,304 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Config represents the complete configuration for Restiverse
+type Config struct {
+	Timeout time.Duration `yaml:"timeout"`
+	Editor  string        `yaml:"editor"`
+	Actions []Action      `yaml:"actions"`
+}
+
+// Action represents a configurable action that can be performed on files
+type Action struct {
+	Name        string   `yaml:"name"`
+	Command     string   `yaml:"command"`
+	Keybinding  string   `yaml:"keybinding,omitempty"`
+	MinFiles    int      `yaml:"min_files"`
+	MaxFiles    *int     `yaml:"max_files"` // nil means unlimited
+	FileTypes   []string `yaml:"file_types"`
+}
+
+// LoadConfig loads configuration from a .restiverse.yaml file
+// If the file doesn't exist, it creates a default configuration
+func LoadConfig(dir string) (*Config, error) {
+	configPath := filepath.Join(dir, ".restiverse.yaml")
+
+	// Check if config file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		// Create default config
+		config := DefaultConfig()
+		if err := SaveConfig(configPath, config); err != nil {
+			return nil, fmt.Errorf("failed to create default config: %w", err)
+		}
+		return config, nil
+	}
+
+	// Read existing config
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	// Validate config
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
+	// Expand environment variables
+	config.ExpandEnvVars()
+
+	return &config, nil
+}
+
+// LoadConfigHierarchy loads configuration with parent folder override logic
+// Child folder configs override parent folder configs
+func LoadConfigHierarchy(dir, baseDir string) (*Config, error) {
+	// Start with base directory config
+	config, err := LoadConfig(baseDir)
+	if err != nil {
+		return nil, err
+	}
+
+	// If dir is same as baseDir, return base config
+	if dir == baseDir {
+		return config, nil
+	}
+
+	// Walk up from dir to baseDir and merge configs
+	relPath, err := filepath.Rel(baseDir, dir)
+	if err != nil {
+		return config, nil // If can't determine relative path, use base config
+	}
+
+	// Split path into components
+	parts := strings.Split(relPath, string(filepath.Separator))
+	currentPath := baseDir
+
+	// For each subdirectory, check for .restiverse.yaml and merge
+	for _, part := range parts {
+		if part == "." || part == "" {
+			continue
+		}
+		currentPath = filepath.Join(currentPath, part)
+
+		childConfigPath := filepath.Join(currentPath, ".restiverse.yaml")
+		if _, err := os.Stat(childConfigPath); err == nil {
+			// Child config exists, merge it
+			childConfig, err := LoadConfig(currentPath)
+			if err != nil {
+				// Skip invalid child configs
+				continue
+			}
+			config = MergeConfigs(config, childConfig)
+		}
+	}
+
+	return config, nil
+}
+
+// MergeConfigs merges child config into parent config (child overrides parent)
+func MergeConfigs(parent, child *Config) *Config {
+	merged := &Config{
+		Timeout: child.Timeout,
+		Editor:  child.Editor,
+		Actions: make([]Action, 0),
+	}
+
+	// If child doesn't set timeout, use parent's
+	if child.Timeout == 0 {
+		merged.Timeout = parent.Timeout
+	}
+
+	// If child doesn't set editor, use parent's
+	if child.Editor == "" {
+		merged.Editor = parent.Editor
+	}
+
+	// Merge actions: child actions override parent actions with same name
+	actionMap := make(map[string]Action)
+
+	// Add parent actions
+	for _, action := range parent.Actions {
+		actionMap[action.Name] = action
+	}
+
+	// Override with child actions
+	for _, action := range child.Actions {
+		actionMap[action.Name] = action
+	}
+
+	// Convert back to slice
+	for _, action := range actionMap {
+		merged.Actions = append(merged.Actions, action)
+	}
+
+	return merged
+}
+
+// DefaultConfig returns a sensible default configuration
+func DefaultConfig() *Config {
+	maxOne := 1
+
+	return &Config{
+		Timeout: 30 * time.Second,
+		Editor:  "$EDITOR",
+		Actions: []Action{
+			{
+				Name:       "Execute Request",
+				Command:    "internal:execute",
+				Keybinding: "r",
+				MinFiles:   1,
+				MaxFiles:   &maxOne,
+				FileTypes:  []string{"http"},
+			},
+			{
+				Name:       "Edit File",
+				Command:    "$EDITOR {filename}",
+				Keybinding: "e",
+				MinFiles:   1,
+				MaxFiles:   &maxOne,
+				FileTypes:  []string{"http", "body", "meta"},
+			},
+			{
+				Name:       "View Output History",
+				Command:    "internal:history",
+				Keybinding: "h",
+				MinFiles:   1,
+				MaxFiles:   &maxOne,
+				FileTypes:  []string{"http"},
+			},
+			{
+				Name:      "View Body",
+				Command:   "less {filename}",
+				MinFiles:  1,
+				MaxFiles:  &maxOne,
+				FileTypes: []string{"body"},
+			},
+			{
+				Name:      "View Meta",
+				Command:   "less {filename}",
+				MinFiles:  1,
+				MaxFiles:  &maxOne,
+				FileTypes: []string{"meta"},
+			},
+			{
+				Name:      "Delete Response",
+				Command:   "rm {filename}",
+				MinFiles:  1,
+				MaxFiles:  nil, // unlimited
+				FileTypes: []string{"body", "meta"},
+			},
+		},
+	}
+}
+
+// SaveConfig saves a configuration to a file
+func SaveConfig(path string, config *Config) error {
+	data, err := yaml.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
+}
+
+// Validate checks if the configuration is valid
+func (c *Config) Validate() error {
+	if c.Timeout <= 0 {
+		return fmt.Errorf("timeout must be positive")
+	}
+
+	// Check for keybinding conflicts
+	keybindings := make(map[string]string)
+	for _, action := range c.Actions {
+		if action.Keybinding != "" {
+			if existing, exists := keybindings[action.Keybinding]; exists {
+				return fmt.Errorf("keybinding conflict: '%s' used by both '%s' and '%s'",
+					action.Keybinding, existing, action.Name)
+			}
+			keybindings[action.Keybinding] = action.Name
+		}
+
+		// Validate action
+		if err := action.Validate(); err != nil {
+			return fmt.Errorf("invalid action '%s': %w", action.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// Validate checks if an action is valid
+func (a *Action) Validate() error {
+	if a.Name == "" {
+		return fmt.Errorf("action name cannot be empty")
+	}
+
+	if a.Command == "" {
+		return fmt.Errorf("action command cannot be empty")
+	}
+
+	if a.MinFiles < 0 {
+		return fmt.Errorf("min_files cannot be negative")
+	}
+
+	if a.MaxFiles != nil && *a.MaxFiles < a.MinFiles {
+		return fmt.Errorf("max_files (%d) cannot be less than min_files (%d)", *a.MaxFiles, a.MinFiles)
+	}
+
+	if len(a.FileTypes) == 0 {
+		return fmt.Errorf("file_types cannot be empty")
+	}
+
+	// Validate file types
+	validTypes := map[string]bool{"http": true, "body": true, "meta": true}
+	for _, ft := range a.FileTypes {
+		if !validTypes[ft] {
+			return fmt.Errorf("invalid file type: %s (must be http, body, or meta)", ft)
+		}
+	}
+
+	return nil
+}
+
+// ExpandEnvVars expands environment variables in the configuration
+func (c *Config) ExpandEnvVars() {
+	c.Editor = os.ExpandEnv(c.Editor)
+
+	// If editor is still empty after expansion, use vi as fallback
+	if c.Editor == "" {
+		c.Editor = "vi"
+	}
+
+	for i := range c.Actions {
+		c.Actions[i].Command = os.ExpandEnv(c.Actions[i].Command)
+	}
+}
+
+// IsInternal checks if an action is an internal command
+func (a *Action) IsInternal() bool {
+	return strings.HasPrefix(a.Command, "internal:")
+}
+
+// GetInternalCommand returns the internal command name (without "internal:" prefix)
+func (a *Action) GetInternalCommand() string {
+	return strings.TrimPrefix(a.Command, "internal:")
+}

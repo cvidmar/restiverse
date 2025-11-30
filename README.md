@@ -1,2 +1,244 @@
-# restiverse
-A terminal-based, graphical user interface REST client and post-processor
+# Restiverse
+
+A terminal-based REST API client written in Go that bridges the gap between powerful command-line tools and the convenience of a unified interface.
+
+## Features
+
+- **Terminal-native**: Built for developers who live in the terminal
+- **File-based workflow**: All requests and responses are files that can be versioned, shared, and scripted
+- **Midnight Commander-style navigation**: Familiar and efficient directory browsing
+- **Configurable actions**: Execute custom commands on response files
+- **Large output friendly**: Designed to handle massive JSON responses
+- **Zero lock-in**: Uses simple `.http` files and YAML configuration
+
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/cvidmar/restiverse.git
+cd restiverse
+
+# Build the binary
+go build -o restiverse ./cmd/restiverse
+
+# Optionally, move to your PATH
+sudo mv restiverse /usr/local/bin/
+```
+
+## Quick Start
+
+```bash
+# Start in current directory
+restiverse
+
+# Start in a specific directory
+restiverse ~/api-tests
+
+# Enable debug logging
+DEBUG=1 restiverse .
+```
+
+## Usage
+
+### Creating HTTP Requests
+
+Create `.http` files with the following format:
+
+```http
+GET https://api.example.com/users
+Accept: application/json
+```
+
+POST with JSON body:
+
+```http
+POST https://api.example.com/users
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "john@example.com"
+}
+```
+
+### Navigation
+
+- **Arrow Keys (↑/↓)**: Navigate through files and folders
+- **Enter**: Open folder or show actions for file
+- **Backspace**: Navigate to parent directory
+- **Space**: Multi-select files
+- **r**: Execute HTTP request (when `.http` file is selected)
+- **h**: View response history
+- **e**: Edit file in your `$EDITOR`
+- **/**: Open fuzzy finder
+- **q** or **Ctrl+C**: Quit
+
+### Response Storage
+
+When you execute a request, Restiverse creates a `responses/` folder next to your `.http` file and stores:
+
+- `.FILENAME_YYYYMMDD_HHMMSS.meta` - Request/response metadata (YAML)
+- `.FILENAME_YYYYMMDD_HHMMSS.body` - Response body
+
+These files are hidden (start with `.`) to avoid clutter.
+
+### Configuration
+
+Restiverse uses `.restiverse.yaml` for configuration. A default config is created automatically when you first run the app in a directory.
+
+Example configuration:
+
+```yaml
+# Request settings
+timeout: 30s
+
+# Editor (defaults to $EDITOR)
+editor: $EDITOR
+
+# Actions
+actions:
+  - name: "Execute Request"
+    command: "internal:execute"
+    keybinding: "r"
+    min_files: 1
+    max_files: 1
+    file_types: ["http"]
+
+  - name: "Edit File"
+    command: "$EDITOR {filename}"
+    keybinding: "e"
+    min_files: 1
+    max_files: 1
+    file_types: ["http", "body", "meta"]
+
+  - name: "View Output History"
+    command: "internal:history"
+    keybinding: "h"
+    min_files: 1
+    max_files: 1
+    file_types: ["http"]
+
+  - name: "View Body"
+    command: "less {filename}"
+    min_files: 1
+    max_files: 1
+    file_types: ["body"]
+
+  - name: "View Body (fx)"
+    command: "fx {filename}"
+    min_files: 1
+    max_files: 1
+    file_types: ["body"]
+```
+
+### Custom Actions
+
+You can define custom actions to process response files. For example, to view JSON with [fx](https://github.com/antonmedv/fx):
+
+```yaml
+actions:
+  - name: "View JSON with fx"
+    command: "fx {filename}"
+    min_files: 1
+    max_files: 1
+    file_types: ["body"]
+```
+
+Or compare two responses with [jd](https://github.com/josephburnett/jd):
+
+```yaml
+actions:
+  - name: "Diff Responses"
+    command: "jd {filename1} {filename2}"
+    min_files: 2
+    max_files: 2
+    file_types: ["body"]
+```
+
+## Example Workflow
+
+1. Create a directory for your API tests:
+   ```bash
+   mkdir ~/api-tests
+   cd ~/api-tests
+   ```
+
+2. Create an `.http` file:
+   ```bash
+   mkdir -p api/users
+   cat > api/users/get-users.http <<EOF
+   GET https://jsonplaceholder.typicode.com/users
+   Accept: application/json
+   EOF
+   ```
+
+3. Start Restiverse:
+   ```bash
+   restiverse .
+   ```
+
+4. Navigate to the file and press `r` to execute the request
+
+5. View the response history with `h`
+
+6. View response with `less` or process with custom tools
+
+## Try it Out
+
+Test files are included in the `test-data/` directory:
+
+```bash
+./restiverse test-data
+```
+
+Navigate to `api/users/get-users.http` and press `r` to execute!
+
+## Current Implementation Status
+
+✅ **Implemented:**
+- File browser with nested folder support
+- `.http` file parsing and execution
+- Response storage with metadata
+- Response history view
+- Basic action system
+- Fuzzy finder (/)
+- Multi-selection
+- Request execution with timeout
+- Configuration system with hierarchical override
+
+⏳ **Not Yet Implemented:**
+- External tool integration (Phase 5 - coming next!)
+- Full action keybindings
+- Environment/variable system
+- OAuth flows
+- GraphQL/WebSocket/gRPC support
+
+## Development
+
+```bash
+# Run tests (when available)
+go test ./...
+
+# Build
+go build -o restiverse ./cmd/restiverse
+
+# Run with debug logging
+DEBUG=1 ./restiverse test-data
+```
+
+## Contributing
+
+Contributions are welcome! Please see [RESTIVERSE-PRD.md](RESTIVERSE-PRD.md) for the full product requirements and implementation guide.
+
+## License
+
+See [LICENSE](LICENSE) for details.
+
+## Acknowledgments
+
+Built with:
+- [Bubbletea](https://github.com/charmbracelet/bubbletea) - TUI framework
+- [Lipgloss](https://github.com/charmbracelet/lipgloss) - Style library
+- [Bubbles](https://github.com/charmbracelet/bubbles) - TUI components
+
+Inspired by tools like Postman, Insomnia, and HTTPie, but designed for terminal lovers who want the power of command-line tools.

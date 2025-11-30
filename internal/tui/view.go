@@ -1,0 +1,359 @@
+package tui
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/cvidmar/restiverse/internal/config"
+	"github.com/cvidmar/restiverse/internal/files"
+)
+
+// View renders the UI based on current model state
+func (m model) View() string {
+	if m.width == 0 {
+		return "Initializing..."
+	}
+
+	var content string
+
+	// Render based on current view
+	switch m.currentView {
+	case ViewFileBrowser:
+		content = m.renderFileBrowser()
+	case ViewHistory:
+		content = m.renderHistory()
+	case ViewActionModal:
+		content = m.renderActionModal()
+	case ViewFuzzyFinder:
+		content = m.renderFuzzyFinder()
+	}
+
+	// Build the full UI
+	topBar := m.renderTopBar()
+	statusBar := m.renderStatusBar()
+
+	// Calculate content height (reserve space for top and status bars)
+	contentHeight := m.height - 2
+	if contentHeight < 5 {
+		contentHeight = 5
+	}
+
+	// Apply content styling with proper sizing
+	styledContent := m.styles.Content.
+		Width(m.width).
+		Height(contentHeight).
+		Render(content)
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		topBar,
+		styledContent,
+		statusBar,
+	)
+}
+
+// renderTopBar renders the top bar with current path
+func (m model) renderTopBar() string {
+	var title string
+
+	switch m.currentView {
+	case ViewFileBrowser:
+		relPath, err := filepath.Rel(m.baseDir, m.currentPath)
+		if err != nil || relPath == "." {
+			title = "Restiverse"
+		} else {
+			title = "Restiverse — " + relPath
+		}
+	case ViewHistory:
+		relPath, _ := filepath.Rel(m.baseDir, m.currentHTTPFile)
+		title = "Restiverse — " + relPath + " — History"
+	case ViewActionModal:
+		title = "Restiverse — Actions"
+	case ViewFuzzyFinder:
+		title = "Restiverse — Find HTTP Request"
+	}
+
+	return m.styles.TopBar.
+		Width(m.width).
+		Render(title)
+}
+
+// renderStatusBar renders the bottom status bar with help hints
+func (m model) renderStatusBar() string {
+	var content string
+
+	// Show error message if present
+	if m.errorMessage != "" {
+		content = m.styles.ErrorMsg.Render("Error: " + m.errorMessage)
+	} else if m.statusMessage != "" {
+		content = m.styles.SuccessMsg.Render(m.statusMessage)
+	} else if m.requestRunning {
+		content = m.styles.InfoMsg.Render("Executing request... [ESC to cancel]")
+	} else {
+		// Show context-appropriate help
+		content = m.renderHelpHints()
+	}
+
+	return m.styles.StatusBar.
+		Width(m.width).
+		Render(content)
+}
+
+// renderHelpHints renders context-appropriate help hints
+func (m model) renderHelpHints() string {
+	var hints []string
+
+	switch m.currentView {
+	case ViewFileBrowser:
+		fileCount := len(m.fileEntries)
+		dirCount := 0
+		for _, entry := range m.fileEntries {
+			if entry.IsDir {
+				dirCount++
+			}
+		}
+
+		info := fmt.Sprintf("%d files, %d dirs", fileCount-dirCount, dirCount)
+		if m.cursor < len(m.fileEntries) {
+			info += " | " + m.fileEntries[m.cursor].Name
+		}
+		hints = []string{info, "/ fuzzy", "backspace back", "q quit"}
+
+	case ViewHistory:
+		info := fmt.Sprintf("%d responses", len(m.responses))
+		hints = []string{info, "Enter actions", "Space select", "backspace back"}
+
+	case ViewActionModal:
+		hints = []string{"Enter execute", "ESC cancel"}
+
+	case ViewFuzzyFinder:
+		hints = []string{"Type to search", "Enter select", "ESC cancel"}
+	}
+
+	return m.styles.HelpText.Render(strings.Join(hints, " | "))
+}
+
+// renderFileBrowser renders the file browser view
+func (m model) renderFileBrowser() string {
+	if len(m.fileEntries) == 0 {
+		return m.renderEmptyDirectory()
+	}
+
+	var items []string
+
+	for i, entry := range m.fileEntries {
+		items = append(items, m.renderFileEntry(i, entry))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, items...)
+}
+
+// renderFileEntry renders a single file or directory entry
+func (m model) renderFileEntry(index int, entry files.FileEntry) string {
+	var style lipgloss.Style
+	isSelected := m.selectedFiles[index]
+	isCursor := index == m.cursor
+
+	// Determine style
+	if isCursor {
+		style = m.styles.SelectedItem
+	} else if isSelected {
+		style = m.styles.MarkedItem
+	} else if entry.IsDir {
+		style = m.styles.Directory
+	} else {
+		style = m.styles.File
+	}
+
+	// Format name
+	prefix := "  "
+	if isSelected {
+		prefix = "* "
+	}
+
+	name := entry.Name
+	if entry.IsDir {
+		name = "/ " + name
+	}
+
+	return style.Render(prefix + name)
+}
+
+// renderHistory renders the history view
+func (m model) renderHistory() string {
+	if len(m.responses) == 0 {
+		return m.renderEmptyHistory()
+	}
+
+	var rows []string
+
+	// Header
+	header := fmt.Sprintf("%-20s %-8s %-10s %-10s", "DateTime", "Status", "Duration", "Size")
+	rows = append(rows, m.styles.TableHeader.Render(header))
+	rows = append(rows, strings.Repeat("─", m.width-4))
+
+	// Rows
+	for i, resp := range m.responses {
+		rows = append(rows, m.renderResponseRow(i, resp))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// renderResponseRow renders a single response row in the history table
+func (m model) renderResponseRow(index int, resp files.ResponseEntry) string {
+	var style lipgloss.Style
+	isSelected := m.selectedResponses[index]
+	isCursor := index == m.historyCursor
+
+	if isCursor {
+		style = m.styles.TableRowSelected
+	} else if isSelected {
+		style = m.styles.MarkedItem
+	} else {
+		style = m.styles.TableRow
+	}
+
+	// Format timestamp
+	timeStr := resp.Timestamp.Format("2006-01-02 15:04")
+
+	// Format status code
+	statusStr := fmt.Sprintf("%d", resp.StatusCode)
+	if resp.HasError {
+		statusStr = "ERR"
+	}
+
+	// Format duration
+	durationStr := fmt.Sprintf("%dms", resp.Duration.Milliseconds())
+
+	// Format size
+	sizeStr := files.FormatFileSize(resp.Size)
+
+	prefix := "  "
+	if isSelected {
+		prefix = "* "
+	}
+
+	row := fmt.Sprintf("%s%-20s %-8s %-10s %-10s",
+		prefix, timeStr, statusStr, durationStr, sizeStr)
+
+	return style.Render(row)
+}
+
+// renderActionModal renders the action modal
+func (m model) renderActionModal() string {
+	if len(m.actions) == 0 {
+		return m.styles.Modal.Render("No actions available")
+	}
+
+	var items []string
+
+	// Title
+	items = append(items, m.styles.ModalTitle.Render(m.modalTitle))
+	items = append(items, "")
+
+	// Actions
+	for i, action := range m.actions {
+		items = append(items, m.renderActionItem(i, action))
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Left, items...)
+
+	modal := m.styles.Modal.Render(content)
+
+	// Center the modal
+	return lipgloss.Place(
+		m.width,
+		m.height-2,
+		lipgloss.Center,
+		lipgloss.Center,
+		modal,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(lipgloss.AdaptiveColor{Light: "#999", Dark: "#666"}),
+	)
+}
+
+// renderActionItem renders a single action in the modal
+func (m model) renderActionItem(index int, action config.Action) string {
+	var style lipgloss.Style
+	isCursor := index == m.modalCursor
+
+	if isCursor {
+		style = m.styles.ModalSelected
+	} else {
+		style = m.styles.ModalItem
+	}
+
+	name := action.Name
+	if action.Keybinding != "" {
+		name += fmt.Sprintf(" [%s]", action.Keybinding)
+	}
+
+	prefix := "  "
+	if isCursor {
+		prefix = "> "
+	}
+
+	return style.Render(prefix + name)
+}
+
+// renderFuzzyFinder renders the fuzzy finder view
+func (m model) renderFuzzyFinder() string {
+	var items []string
+
+	// Search input
+	items = append(items, "Search: "+m.searchInput.View())
+	items = append(items, "")
+
+	// Results
+	if len(m.searchResults) == 0 {
+		items = append(items, m.styles.HelpText.Render("No results"))
+	} else {
+		for i, result := range m.searchResults {
+			var style lipgloss.Style
+			if i == m.cursor {
+				style = m.styles.SelectedItem
+			} else {
+				style = m.styles.File
+			}
+
+			prefix := "  "
+			if i == m.cursor {
+				prefix = "> "
+			}
+
+			items = append(items, style.Render(prefix+result.Name))
+		}
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Left, items...)
+
+	// Render as a modal overlay
+	modal := m.styles.Modal.Render(content)
+
+	return lipgloss.Place(
+		m.width,
+		m.height-2,
+		lipgloss.Center,
+		lipgloss.Center,
+		modal,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(lipgloss.AdaptiveColor{Light: "#999", Dark: "#666"}),
+	)
+}
+
+// renderEmptyDirectory renders the empty state for file browser
+func (m model) renderEmptyDirectory() string {
+	msg := "No .http files in this directory\n\n"
+	msg += "Press 'e' to create a new .http file"
+	return m.styles.HelpText.Render(msg)
+}
+
+// renderEmptyHistory renders the empty state for history view
+func (m model) renderEmptyHistory() string {
+	msg := "No response history\n\n"
+	msg += "Press 'r' to execute the request"
+	return m.styles.HelpText.Render(msg)
+}
