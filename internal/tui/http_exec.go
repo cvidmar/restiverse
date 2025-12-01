@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	httpPkg "github.com/cvidmar/restiverse/internal/http"
@@ -49,6 +50,15 @@ func (m model) executeRequestCmd(httpFilePath string) tea.Cmd {
 		saveErr := httpPkg.SaveResponse(httpFilePath, req, resp, err)
 		if saveErr != nil {
 			return requestErrorMsg{fmt.Errorf("failed to save response: %w", saveErr)}
+		}
+
+		// Cleanup old responses if configured
+		if m.config.MaxResponses > 0 {
+			cleanupErr := httpPkg.CleanupOldResponses(httpFilePath, m.config.MaxResponses)
+			if cleanupErr != nil {
+				// Log warning but don't fail the request
+				fmt.Fprintf(os.Stderr, "Warning: failed to cleanup old responses: %v\n", cleanupErr)
+			}
 		}
 
 		if err != nil {

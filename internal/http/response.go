@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -160,6 +161,94 @@ func SaveResponseWithStream(httpFilePath string, req *HTTPRequest, resp *Respons
 
 	if err := os.WriteFile(metaPath, metaData, 0644); err != nil {
 		return fmt.Errorf("failed to write metadata file: %w", err)
+	}
+
+	return nil
+}
+
+// CleanupOldResponses removes old response files, keeping only the most recent maxResponses files
+// If maxResponses is 0, no cleanup is performed
+func CleanupOldResponses(httpFilePath string, maxResponses int) error {
+	if maxResponses <= 0 {
+		return nil // Unlimited responses, no cleanup
+	}
+
+	// Get responses directory
+	responsesDir := filepath.Join(filepath.Dir(httpFilePath), "responses")
+	if _, err := os.Stat(responsesDir); os.IsNotExist(err) {
+		return nil // No responses directory, nothing to clean
+	}
+
+	// Get base name for this HTTP file
+	baseName := strings.TrimSuffix(filepath.Base(httpFilePath), ".http")
+	prefix := "." + baseName + "_"
+
+	// Find all response files for this HTTP file
+	entries, err := os.ReadDir(responsesDir)
+	if err != nil {
+		return fmt.Errorf("failed to read responses directory: %w", err)
+	}
+
+	// Collect meta files for this HTTP file with their modification times
+	type responseFile struct {
+		metaPath string
+		bodyPath string
+		modTime  time.Time
+	}
+	var responses []responseFile
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".meta") {
+			continue
+		}
+
+		// Get file info for modification time
+		metaPath := filepath.Join(responsesDir, name)
+		info, err := os.Stat(metaPath)
+		if err != nil {
+			continue
+		}
+
+		// Determine corresponding body file
+		bodyName := strings.TrimSuffix(name, ".meta") + ".body"
+		bodyPath := filepath.Join(responsesDir, bodyName)
+
+		responses = append(responses, responseFile{
+			metaPath: metaPath,
+			bodyPath: bodyPath,
+			modTime:  info.ModTime(),
+		})
+	}
+
+	// If we have fewer responses than the max, nothing to delete
+	if len(responses) <= maxResponses {
+		return nil
+	}
+
+	// Sort by modification time (newest first)
+	sort.Slice(responses, func(i, j int) bool {
+		return responses[i].modTime.After(responses[j].modTime)
+	})
+
+	// Delete old responses (keep only the first maxResponses)
+	for i := maxResponses; i < len(responses); i++ {
+		// Delete meta file
+		if err := os.Remove(responses[i].metaPath); err != nil && !os.IsNotExist(err) {
+			// Log error but continue with other files
+			fmt.Fprintf(os.Stderr, "Warning: failed to delete %s: %v\n", responses[i].metaPath, err)
+		}
+
+		// Delete body file (may not exist for failed requests)
+		if _, err := os.Stat(responses[i].bodyPath); err == nil {
+			if err := os.Remove(responses[i].bodyPath); err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "Warning: failed to delete %s: %v\n", responses[i].bodyPath, err)
+			}
+		}
 	}
 
 	return nil

@@ -1,5 +1,6 @@
 timeout: 30s
 editor: $EDITOR
+max_responses: 5  # Keep only the 5 most recent responses per .http file (0 = unlimited)
 actions:
     - name: Execute Request
       command: internal:execute
@@ -36,6 +37,7 @@ actions:
       max_files: 1
       file_types:
         - body
+      keybinding: f
     - name: View Meta
       command: less {filename}
       min_files: 1

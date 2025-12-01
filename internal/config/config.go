@@ -12,9 +12,10 @@ import (
 
 // Config represents the complete configuration for Restiverse
 type Config struct {
-	Timeout time.Duration `yaml:"timeout"`
-	Editor  string        `yaml:"editor"`
-	Actions []Action      `yaml:"actions"`
+	Timeout      time.Duration `yaml:"timeout"`
+	Editor       string        `yaml:"editor"`
+	MaxResponses int           `yaml:"max_responses,omitempty"` // Max response files to keep per .http file (0 = unlimited)
+	Actions      []Action      `yaml:"actions"`
 }
 
 // Action represents a configurable action that can be performed on files
@@ -113,9 +114,10 @@ func LoadConfigHierarchy(dir, baseDir string) (*Config, error) {
 // MergeConfigs merges child config into parent config (child overrides parent)
 func MergeConfigs(parent, child *Config) *Config {
 	merged := &Config{
-		Timeout: child.Timeout,
-		Editor:  child.Editor,
-		Actions: make([]Action, 0),
+		Timeout:      child.Timeout,
+		Editor:       child.Editor,
+		MaxResponses: child.MaxResponses,
+		Actions:      make([]Action, 0),
 	}
 
 	// If child doesn't set timeout, use parent's
@@ -126,6 +128,11 @@ func MergeConfigs(parent, child *Config) *Config {
 	// If child doesn't set editor, use parent's
 	if child.Editor == "" {
 		merged.Editor = parent.Editor
+	}
+
+	// If child doesn't set max_responses, use parent's
+	if child.MaxResponses == 0 {
+		merged.MaxResponses = parent.MaxResponses
 	}
 
 	// Merge actions: child actions override parent actions with same name
@@ -154,9 +161,10 @@ func DefaultConfig() *Config {
 	maxOne := 1
 
 	return &Config{
-		Timeout: 30 * time.Second,
-		Editor:  "$EDITOR",
-		Actions: []Action{
+		Timeout:      30 * time.Second,
+		Editor:       "$EDITOR",
+		MaxResponses: 5, // Keep last 5 responses by default
+		Actions:      []Action{
 			{
 				Name:       "Execute Request",
 				Command:    "internal:execute",
@@ -240,6 +248,10 @@ func SaveConfig(path string, config *Config) error {
 func (c *Config) Validate() error {
 	if c.Timeout <= 0 {
 		return fmt.Errorf("timeout must be positive")
+	}
+
+	if c.MaxResponses < 0 {
+		return fmt.Errorf("max_responses cannot be negative (use 0 for unlimited)")
 	}
 
 	// Check for keybinding conflicts
