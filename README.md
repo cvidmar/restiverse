@@ -67,10 +67,12 @@ Content-Type: application/json
 - **Enter**: Open folder or show actions for file
 - **Backspace**: Navigate to parent directory
 - **Space**: Multi-select files
+- **n**: Create new `.http` file (opens in `$EDITOR`)
 - **r**: Execute HTTP request (when `.http` file is selected)
 - **h**: View response history
 - **e**: Edit file in your `$EDITOR`
-- **/**: Open fuzzy finder
+- **/**: Open fuzzy finder (use arrow keys to navigate results)
+- **ESC**: Close modals/cancel operations
 - **q** or **Ctrl+C**: Quit
 
 ### Response Storage
@@ -124,7 +126,7 @@ actions:
     max_files: 1
     file_types: ["body"]
 
-  - name: "View Body (fx)"
+  - name: "View as JSON"
     command: "fx {filename}"
     min_files: 1
     max_files: 1
@@ -133,11 +135,11 @@ actions:
 
 ### Custom Actions
 
-You can define custom actions to process response files. For example, to view JSON with [fx](https://github.com/antonmedv/fx):
+You can define custom actions to process response files using external commands. For example, to view JSON with [fx](https://github.com/antonmedv/fx):
 
 ```yaml
 actions:
-  - name: "View JSON with fx"
+  - name: "View as JSON"
     command: "fx {filename}"
     min_files: 1
     max_files: 1
@@ -195,23 +197,27 @@ Navigate to `api/users/get-users.http` and press `r` to execute!
 
 ## Current Implementation Status
 
-✅ **Implemented:**
-- File browser with nested folder support
-- `.http` file parsing and execution
-- Response storage with metadata
-- Response history view
-- Basic action system
-- Fuzzy finder (/)
-- Multi-selection
-- Request execution with timeout
-- Configuration system with hierarchical override
+✅ **Fully Implemented:**
+- 🗂️ **File browser** with nested folder support and MC-style navigation
+- 📝 **`.http` file parsing and execution** with all standard HTTP methods
+- 💾 **Response storage** with timestamped `.meta` (YAML) and `.body` files
+- 📊 **Response history view** with table layout showing status, duration, and size
+- ⚙️ **Action system** with configurable actions via `.restiverse.yaml`
+- 🔍 **Fuzzy finder** with arrow key navigation (press `/`)
+- ✅ **Multi-selection** support (Space key)
+- ⏱️ **Request execution** with timeout and cancellation (ESC)
+- 🌳 **Configuration hierarchy** with child folder override support
+- 🛠️ **External tool integration** with proper terminal handoff
+- ⌨️ **Action keybindings** (r, e, h, n, etc.)
+- ✏️ **File creation** - press 'n' to create new `.http` files
+- 🔐 **Credential masking** in `.meta` files (Authorization headers)
 
-⏳ **Not Yet Implemented:**
-- External tool integration (Phase 5 - coming next!)
-- Full action keybindings
-- Environment/variable system
-- OAuth flows
+⏳ **Not Yet Implemented (Future Enhancements):**
+- Environment/variable system for different environments (dev/staging/prod)
+- OAuth flows and dynamic token generation
 - GraphQL/WebSocket/gRPC support
+- Pre-request scripts and response assertions
+- Collection runner for batch execution
 
 ## Development
 
@@ -228,7 +234,7 @@ DEBUG=1 ./restiverse test-data
 
 ## Contributing
 
-Contributions are welcome! Please see [RESTIVERSE-PRD.md](RESTIVERSE-PRD.md) for the full product requirements and implementation guide.
+Contributions are welcome, but hang on a sec, this is still very early stage.
 
 ## License
 

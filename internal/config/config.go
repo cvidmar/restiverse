@@ -182,6 +182,22 @@ func DefaultConfig() *Config {
 				FileTypes:  []string{"http"},
 			},
 			{
+				Name:       "Rename File",
+				Command:    "internal:rename",
+				Keybinding: "R",
+				MinFiles:   1,
+				MaxFiles:   &maxOne,
+				FileTypes:  []string{"http"},
+			},
+			{
+				Name:       "Delete File",
+				Command:    "internal:delete",
+				Keybinding: "D",
+				MinFiles:   1,
+				MaxFiles:   &maxOne,
+				FileTypes:  []string{"http"},
+			},
+			{
 				Name:      "View Body",
 				Command:   "less {filename}",
 				MinFiles:  1,
@@ -288,8 +304,20 @@ func (c *Config) ExpandEnvVars() {
 		c.Editor = "vi"
 	}
 
+	// Set EDITOR environment variable for action command expansion
+	// This ensures $EDITOR in action commands gets expanded to the actual editor
+	oldEditor := os.Getenv("EDITOR")
+	os.Setenv("EDITOR", c.Editor)
+
 	for i := range c.Actions {
 		c.Actions[i].Command = os.ExpandEnv(c.Actions[i].Command)
+	}
+
+	// Restore original EDITOR env var (or unset if it wasn't set)
+	if oldEditor != "" {
+		os.Setenv("EDITOR", oldEditor)
+	} else {
+		os.Unsetenv("EDITOR")
 	}
 }
 

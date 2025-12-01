@@ -17,6 +17,8 @@ const (
 	ViewHistory
 	ViewActionModal
 	ViewFuzzyFinder
+	ViewInputModal
+	ViewConfirmModal
 )
 
 // model represents the application state
@@ -50,6 +52,17 @@ type model struct {
 	searchInput   textinput.Model
 	searchResults []files.FileEntry
 
+	// Input modal state
+	inputField      textinput.Model
+	inputMode       string // "create", "rename"
+	inputTitle      string
+	renameTargetIdx int // For rename operations
+
+	// Confirm modal state
+	confirmTitle   string
+	confirmMessage string
+	confirmAction  func(model) (model, tea.Cmd) // Callback for confirmed action
+
 	// HTTP execution state
 	requestRunning bool
 	cancelFunc     context.CancelFunc
@@ -73,6 +86,10 @@ func NewModel(cfg *config.Config, baseDir string) model {
 	ti.Placeholder = "Search..."
 	ti.Focus()
 
+	inputField := textinput.New()
+	inputField.Placeholder = "filename.http"
+	inputField.CharLimit = 255
+
 	return model{
 		config:            cfg,
 		baseDir:           baseDir,
@@ -81,6 +98,7 @@ func NewModel(cfg *config.Config, baseDir string) model {
 		selectedFiles:     make(map[int]bool),
 		selectedResponses: make(map[int]bool),
 		searchInput:       ti,
+		inputField:        inputField,
 		styles:            DefaultStyles(),
 		keys:              DefaultKeyMap(),
 	}
@@ -151,3 +169,5 @@ type externalToolCompleteMsg struct{}
 type externalToolErrorMsg struct {
 	err error
 }
+
+type clearStatusMsg struct{}

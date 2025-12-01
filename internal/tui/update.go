@@ -66,6 +66,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case searchResultsMsg:
 		return m.handleSearchResults(msg)
 
+	case clearStatusMsg:
+		m.statusMessage = ""
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKeyPress(msg)
 	}
@@ -90,7 +94,7 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		// Close modals
-		if m.currentView == ViewActionModal || m.currentView == ViewFuzzyFinder {
+		if m.currentView == ViewActionModal || m.currentView == ViewFuzzyFinder || m.currentView == ViewInputModal || m.currentView == ViewConfirmModal {
 			m.currentView = m.previousView
 			return m, nil
 		}
@@ -113,6 +117,10 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateActionModal(msg)
 	case ViewFuzzyFinder:
 		return m.updateFuzzyFinder(msg)
+	case ViewInputModal:
+		return m.updateInputModal(msg)
+	case ViewConfirmModal:
+		return m.updateConfirmModal(msg)
 	}
 
 	return m, nil
@@ -168,6 +176,16 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.navigateToDir(parentDir)
 		}
 		return m, nil
+	}
+
+	// Special keys
+	switch msg.String() {
+	case "n":
+		return m.promptForNewHTTPFile()
+	case "R": // Shift+R for rename
+		return m.promptForRenameFile()
+	case "D": // Shift+D for delete
+		return m.promptDeleteFile()
 	}
 
 	// Check for action keybindings
@@ -254,6 +272,21 @@ func (m model) updateActionModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // updateFuzzyFinder handles key presses in the fuzzy finder
 func (m model) updateFuzzyFinder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle navigation in results
+	if matches(msg, m.keys.Up) {
+		if m.cursor > 0 {
+			m.cursor--
+		}
+		return m, nil
+	}
+
+	if matches(msg, m.keys.Down) {
+		if m.cursor < len(m.searchResults)-1 {
+			m.cursor++
+		}
+		return m, nil
+	}
+
 	if matches(msg, m.keys.Enter) {
 		// Navigate to selected file
 		if len(m.searchResults) > 0 && m.cursor < len(m.searchResults) {
@@ -272,4 +305,47 @@ func (m model) updateFuzzyFinder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Trigger search
 	query := m.searchInput.Value()
 	return m, tea.Batch(cmd, m.searchHTTPFilesCmd(query))
+}
+
+// updateInputModal handles key presses in the input modal
+func (m model) updateInputModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if matches(msg, m.keys.Enter) {
+		value := m.inputField.Value()
+		m.inputField.Blur()
+
+		switch m.inputMode {
+		case "create":
+			return m.createHTTPFileWithName(value)
+		case "rename":
+			return m.renameFileWithName(value)
+		}
+
+		m.currentView = m.previousView
+		return m, nil
+	}
+
+	// Update input field
+	var cmd tea.Cmd
+	m.inputField, cmd = m.inputField.Update(msg)
+	return m, cmd
+}
+
+// updateConfirmModal handles key presses in the confirm modal
+func (m model) updateConfirmModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		// Execute the confirmed action
+		if m.confirmAction != nil {
+			return m.confirmAction(m)
+		}
+		m.currentView = m.previousView
+		return m, nil
+
+	case "n", "N":
+		// Cancel
+		m.currentView = m.previousView
+		return m, nil
+	}
+
+	return m, nil
 }

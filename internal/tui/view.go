@@ -28,6 +28,10 @@ func (m model) View() string {
 		content = m.renderActionModal()
 	case ViewFuzzyFinder:
 		content = m.renderFuzzyFinder()
+	case ViewInputModal:
+		content = m.renderInputModal()
+	case ViewConfirmModal:
+		content = m.renderConfirmModal()
 	}
 
 	// Build the full UI
@@ -73,6 +77,10 @@ func (m model) renderTopBar() string {
 		title = "Restiverse — Actions"
 	case ViewFuzzyFinder:
 		title = "Restiverse — Find HTTP Request"
+	case ViewInputModal:
+		title = "Restiverse — " + m.inputTitle
+	case ViewConfirmModal:
+		title = "Restiverse — " + m.confirmTitle
 	}
 
 	return m.styles.TopBar.
@@ -119,7 +127,7 @@ func (m model) renderHelpHints() string {
 		if m.cursor < len(m.fileEntries) {
 			info += " | " + m.fileEntries[m.cursor].Name
 		}
-		hints = []string{info, "/ fuzzy", "backspace back", "q quit"}
+		hints = []string{info, "n new", "R rename", "D delete", "/ fuzzy", "q quit"}
 
 	case ViewHistory:
 		info := fmt.Sprintf("%d responses", len(m.responses))
@@ -130,6 +138,12 @@ func (m model) renderHelpHints() string {
 
 	case ViewFuzzyFinder:
 		hints = []string{"Type to search", "Enter select", "ESC cancel"}
+
+	case ViewInputModal:
+		hints = []string{"Type filename", "Enter confirm", "ESC cancel"}
+
+	case ViewConfirmModal:
+		hints = []string{"Y confirm", "N cancel"}
 	}
 
 	return m.styles.HelpText.Render(strings.Join(hints, " | "))
@@ -347,13 +361,79 @@ func (m model) renderFuzzyFinder() string {
 // renderEmptyDirectory renders the empty state for file browser
 func (m model) renderEmptyDirectory() string {
 	msg := "No .http files in this directory\n\n"
-	msg += "Press 'e' to create a new .http file"
+	msg += "Press 'n' to create a new .http file\n"
+	msg += "Or navigate to a subdirectory with the arrow keys"
 	return m.styles.HelpText.Render(msg)
 }
 
 // renderEmptyHistory renders the empty state for history view
 func (m model) renderEmptyHistory() string {
-	msg := "No response history\n\n"
-	msg += "Press 'r' to execute the request"
+	msg := "No response history for this request\n\n"
+	msg += "Press 'r' to execute the request\n"
+	msg += "Press 'backspace' to return to file browser"
 	return m.styles.HelpText.Render(msg)
+}
+
+// renderInputModal renders the input modal
+func (m model) renderInputModal() string {
+	var items []string
+
+	// Title
+	items = append(items, m.styles.ModalTitle.Render(m.inputTitle))
+	items = append(items, "")
+
+	// Input field
+	items = append(items, m.inputField.View())
+	items = append(items, "")
+
+	// Help text
+	items = append(items, m.styles.HelpText.Render("Enter to confirm | ESC to cancel"))
+
+	content := lipgloss.JoinVertical(lipgloss.Left, items...)
+
+	modal := m.styles.Modal.Render(content)
+
+	// Center the modal
+	return lipgloss.Place(
+		m.width,
+		m.height-2,
+		lipgloss.Center,
+		lipgloss.Center,
+		modal,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(lipgloss.AdaptiveColor{Light: "#999", Dark: "#666"}),
+	)
+}
+
+// renderConfirmModal renders the confirmation modal
+func (m model) renderConfirmModal() string {
+	var items []string
+
+	// Title
+	items = append(items, m.styles.ModalTitle.Render(m.confirmTitle))
+	items = append(items, "")
+
+	// Message (split by newlines)
+	for _, line := range strings.Split(m.confirmMessage, "\n") {
+		items = append(items, line)
+	}
+	items = append(items, "")
+
+	// Help text
+	items = append(items, m.styles.HelpText.Render("Y to confirm | N to cancel"))
+
+	content := lipgloss.JoinVertical(lipgloss.Left, items...)
+
+	modal := m.styles.Modal.Render(content)
+
+	// Center the modal
+	return lipgloss.Place(
+		m.width,
+		m.height-2,
+		lipgloss.Center,
+		lipgloss.Center,
+		modal,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(lipgloss.AdaptiveColor{Light: "#999", Dark: "#666"}),
+	)
 }

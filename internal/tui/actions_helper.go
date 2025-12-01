@@ -38,11 +38,28 @@ func (m model) showActionsForResponse() (model, tea.Cmd) {
 		selected = []int{m.historyCursor}
 	}
 
-	// Determine file types (body or meta)
-	fileTypes := []string{"body", "meta"}
-	selectedCount := len(selected)
+	// Get all applicable actions (for both body and meta files)
+	// We need to gather actions that work with either file type
+	var applicable []config.Action
+	actionMap := make(map[string]config.Action) // Use map to avoid duplicates
 
-	applicable := m.config.FilterActions(fileTypes, selectedCount)
+	// Check for body file actions
+	bodyActions := m.config.FilterActions([]string{"body"}, len(selected))
+	for _, action := range bodyActions {
+		actionMap[action.Name] = action
+	}
+
+	// Check for meta file actions
+	metaActions := m.config.FilterActions([]string{"meta"}, len(selected))
+	for _, action := range metaActions {
+		actionMap[action.Name] = action
+	}
+
+	// Convert map back to slice
+	for _, action := range actionMap {
+		applicable = append(applicable, action)
+	}
+
 	if len(applicable) == 0 {
 		m.statusMessage = "No actions available"
 		return m, nil
@@ -53,7 +70,7 @@ func (m model) showActionsForResponse() (model, tea.Cmd) {
 	m.actions = applicable
 	m.modalCursor = 0
 
-	if selectedCount == 1 {
+	if len(selected) == 1 {
 		m.modalTitle = "Actions for response"
 	} else {
 		m.modalTitle = "Actions for responses"
@@ -126,6 +143,10 @@ func (m model) executeInternalAction(action *config.Action) (model, tea.Cmd) {
 		return m.executeHTTPRequest()
 	case "history":
 		return m.showHistory()
+	case "rename":
+		return m.promptForRenameFile()
+	case "delete":
+		return m.promptDeleteFile()
 	default:
 		m.errorMessage = "Unknown internal command: " + cmd
 		return m, nil
@@ -217,6 +238,67 @@ func (m model) getSelectedResponsePaths() []string {
 		}
 		if resp.MetaPath != "" {
 			paths = append(paths, resp.MetaPath)
+		}
+	}
+	return paths
+}
+
+// getSelectedResponsePathsForAction returns the file paths filtered by action's supported file types
+func (m model) getSelectedResponsePathsForAction(action *config.Action) []string {
+	selected := m.getSelectedResponses()
+
+	// For single-file actions (max_files = 1), prioritize body over meta
+	isSingleFileAction := action.MaxFiles != nil && *action.MaxFiles == 1
+
+	if len(selected) == 0 {
+		// No multi-selection, use current cursor
+		if len(m.responses) > 0 {
+			resp := m.responses[m.historyCursor]
+			var paths []string
+
+			// For single-file actions, return only one file (prefer body over meta)
+			if isSingleFileAction {
+				if action.SupportsFileType("body") && resp.BodyPath != "" {
+					return []string{resp.BodyPath}
+				}
+				if action.SupportsFileType("meta") && resp.MetaPath != "" {
+					return []string{resp.MetaPath}
+				}
+				return []string{}
+			}
+
+			// For multi-file actions, include all supported file types
+			if action.SupportsFileType("body") && resp.BodyPath != "" {
+				paths = append(paths, resp.BodyPath)
+			}
+			if action.SupportsFileType("meta") && resp.MetaPath != "" {
+				paths = append(paths, resp.MetaPath)
+			}
+
+			return paths
+		}
+		return []string{}
+	}
+
+	var paths []string
+	for _, idx := range selected {
+		resp := m.responses[idx]
+
+		// For single-file actions with multiple selections, only include body (or meta if no body)
+		if isSingleFileAction {
+			if action.SupportsFileType("body") && resp.BodyPath != "" {
+				paths = append(paths, resp.BodyPath)
+			} else if action.SupportsFileType("meta") && resp.MetaPath != "" {
+				paths = append(paths, resp.MetaPath)
+			}
+		} else {
+			// For multi-file actions, include all supported file types
+			if action.SupportsFileType("body") && resp.BodyPath != "" {
+				paths = append(paths, resp.BodyPath)
+			}
+			if action.SupportsFileType("meta") && resp.MetaPath != "" {
+				paths = append(paths, resp.MetaPath)
+			}
 		}
 	}
 	return paths

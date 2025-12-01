@@ -30,6 +30,12 @@ actions:
       max_files: 1
       file_types:
         - body
+    - name: View as JSON
+      command: fx {filename}
+      min_files: 1
+      max_files: 1
+      file_types:
+        - body
     - name: View Meta
       command: less {filename}
       min_files: 1
