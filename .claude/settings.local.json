@@ -6,9 +6,13 @@
       "Bash(go build:*)",
       "Bash(./restiverse:*)",
       "Bash(echo:*)",
-      "Bash(env)"
+      "Bash(env)",
+      "Bash(../restiverse)",
+      "Bash(md5:*)"
     ],
-    "deny": [],
+    "deny": [
+      "Bash(git:*)"
+    ],
     "ask": []
   }
 }

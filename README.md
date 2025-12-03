@@ -84,6 +84,8 @@ When you execute a request, Restiverse creates a `responses/` folder next to you
 
 These files are hidden (start with `.`) to avoid clutter.
 
+**Automatic Cleanup:** By default, Restiverse keeps only the 5 most recent response files per `.http` file. When you execute a request and save a new response, older responses beyond the limit are automatically deleted. You can configure this with the `max_responses` setting (set to `0` for unlimited).
+
 ### Configuration
 
 Restiverse uses `.restiverse.yaml` for configuration. A default config is created automatically when you first run the app in a directory.
@@ -96,6 +98,9 @@ timeout: 30s
 
 # Editor (defaults to $EDITOR)
 editor: $EDITOR
+
+# Response history management
+max_responses: 5  # Keep only the 5 most recent responses per .http file (0 = unlimited)
 
 # Actions
 actions:

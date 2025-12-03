@@ -58,16 +58,34 @@ func (a *Action) BuildCommand(filePaths []string) (string, error) {
 		if len(filePaths) != 1 {
 			return "", fmt.Errorf("action requires exactly 1 file, got %d", len(filePaths))
 		}
-		cmd = strings.ReplaceAll(cmd, "{filename}", filePaths[0])
+		// Quote the file path for shell safety
+		quotedPath := shellQuote(filePaths[0])
+		cmd = strings.ReplaceAll(cmd, "{filename}", quotedPath)
 	}
 
 	// Handle numbered placeholders {filename1}, {filename2}, etc.
 	for i, path := range filePaths {
 		placeholder := fmt.Sprintf("{filename%d}", i+1)
-		cmd = strings.ReplaceAll(cmd, placeholder, path)
+		quotedPath := shellQuote(path)
+		cmd = strings.ReplaceAll(cmd, placeholder, quotedPath)
 	}
 
 	return cmd, nil
+}
+
+// shellQuote quotes a string for safe use in a shell command
+// Uses single quotes and escapes any single quotes in the string
+func shellQuote(s string) string {
+	// If the string is empty, return empty quotes
+	if s == "" {
+		return "''"
+	}
+
+	// Replace single quotes with '\'' (end quote, escaped quote, start quote)
+	s = strings.ReplaceAll(s, "'", "'\"'\"'")
+
+	// Wrap in single quotes
+	return "'" + s + "'"
 }
 
 // GetActionByKeybinding finds an action by its keybinding

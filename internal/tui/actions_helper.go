@@ -110,18 +110,34 @@ func (m model) executeActionKeybinding(action *config.Action) (model, tea.Cmd) {
 			selectedCount = 1
 		}
 	} else if m.currentView == ViewHistory {
-		fileTypes = []string{"body", "meta"}
 		selectedCount = len(m.getSelectedResponses())
 		if selectedCount == 0 {
 			selectedCount = 1
 		}
+
+		// For history view, check if action supports body OR meta (not both required)
+		// This matches the modal menu behavior in showActionsForResponse()
+		supportsBody := action.IsApplicable([]string{"body"}, selectedCount)
+		supportsMeta := action.IsApplicable([]string{"meta"}, selectedCount)
+
+		if !supportsBody && !supportsMeta {
+			m.errorMessage = "Action not applicable"
+			return m, nil
+		}
+
+		// Optimization: skip the general IsApplicable check since we already checked
+		// Execute the action directly
+		if action.IsInternal() {
+			return m.executeInternalAction(action)
+		}
+		return m.executeExternalAction(action)
 	} else {
 		return m, nil
 	}
 
-	// Check if action is applicable
+	// Check if action is applicable (for non-history views)
 	if !action.IsApplicable(fileTypes, selectedCount) {
-		m.statusMessage = "Action not applicable"
+		m.errorMessage = "Action not applicable"
 		return m, nil
 	}
 

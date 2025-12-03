@@ -18,6 +18,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.fileEntries = msg.entries
 		m.cursor = 0
 		m.selectedFiles = make(map[int]bool)
+
+		// If we have a target file name (from fuzzy finder), position cursor on it
+		if m.targetFileName != "" {
+			for i, entry := range m.fileEntries {
+				if entry.Name == m.targetFileName {
+					m.cursor = i
+					break
+				}
+			}
+			m.targetFileName = "" // Clear the target
+		}
 		return m, nil
 
 	case navigatedToDirMsg:
@@ -26,6 +37,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cursor = 0
 		m.selectedFiles = make(map[int]bool)
 		m.errorMessage = ""
+
+		// If we have a target file name (from fuzzy finder), position cursor on it
+		if m.targetFileName != "" {
+			for i, entry := range m.fileEntries {
+				if entry.Name == m.targetFileName {
+					m.cursor = i
+					break
+				}
+			}
+			m.targetFileName = "" // Clear the target
+		}
 		return m, nil
 
 	case historyLoadedMsg:
@@ -85,6 +107,9 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if matches(msg, m.keys.Cancel) {
+		// Clear error on escape
+		m.errorMessage = ""
+
 		// Cancel request if running
 		if m.requestRunning && m.cancelFunc != nil {
 			m.cancelFunc()
@@ -128,6 +153,9 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // updateFileBrowser handles key presses in the file browser view
 func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Clear error on any key press
+	m.errorMessage = ""
+
 	// Navigation
 	if matches(msg, m.keys.Up) {
 		if m.cursor > 0 {
@@ -198,6 +226,9 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // updateHistory handles key presses in the history view
 func (m model) updateHistory(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Clear error on any key press
+	m.errorMessage = ""
+
 	// Navigation
 	if matches(msg, m.keys.Up) {
 		if m.historyCursor > 0 {
@@ -245,6 +276,9 @@ func (m model) updateHistory(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // updateActionModal handles key presses in the action modal
 func (m model) updateActionModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Clear error on any key press
+	m.errorMessage = ""
+
 	if matches(msg, m.keys.Up) {
 		if m.modalCursor > 0 {
 			m.modalCursor--
@@ -272,6 +306,9 @@ func (m model) updateActionModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // updateFuzzyFinder handles key presses in the fuzzy finder
 func (m model) updateFuzzyFinder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Clear error on any key press
+	m.errorMessage = ""
+
 	// Handle navigation in results
 	if matches(msg, m.keys.Up) {
 		if m.cursor > 0 {
@@ -293,6 +330,7 @@ func (m model) updateFuzzyFinder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			selectedFile := m.searchResults[m.cursor]
 			m.currentView = m.previousView
 			m.currentPath = filepath.Dir(selectedFile.Path)
+			m.targetFileName = filepath.Base(selectedFile.Path) // Remember which file to highlight
 			return m, m.loadDirectoryCmd()
 		}
 		return m, nil

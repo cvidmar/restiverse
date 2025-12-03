@@ -32,10 +32,11 @@ type model struct {
 	previousView ViewType // For returning from modal
 
 	// File browser state
-	currentPath   string
-	fileEntries   []files.FileEntry
-	cursor        int
-	selectedFiles map[int]bool // Multi-selection
+	currentPath      string
+	fileEntries      []files.FileEntry
+	cursor           int
+	selectedFiles    map[int]bool // Multi-selection
+	targetFileName   string       // Target file to highlight after directory load (from fuzzy finder)
 
 	// History view state
 	currentHTTPFile   string
