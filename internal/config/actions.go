@@ -53,21 +53,40 @@ func (a *Action) SupportsFileType(fileType string) bool {
 func (a *Action) BuildCommand(filePaths []string) (string, error) {
 	cmd := a.Command
 
-	// Handle generic {filename} placeholder (for single file)
-	if strings.Contains(cmd, "{filename}") {
-		if len(filePaths) != 1 {
-			return "", fmt.Errorf("action requires exactly 1 file, got %d", len(filePaths))
+	// Check if command uses numbered placeholders
+	usesNumberedPlaceholders := false
+	for i := range filePaths {
+		placeholder := fmt.Sprintf("{filename%d}", i+1)
+		if strings.Contains(cmd, placeholder) {
+			usesNumberedPlaceholders = true
+			break
 		}
-		// Quote the file path for shell safety
-		quotedPath := shellQuote(filePaths[0])
-		cmd = strings.ReplaceAll(cmd, "{filename}", quotedPath)
 	}
 
 	// Handle numbered placeholders {filename1}, {filename2}, etc.
-	for i, path := range filePaths {
-		placeholder := fmt.Sprintf("{filename%d}", i+1)
-		quotedPath := shellQuote(path)
-		cmd = strings.ReplaceAll(cmd, placeholder, quotedPath)
+	if usesNumberedPlaceholders {
+		for i, path := range filePaths {
+			placeholder := fmt.Sprintf("{filename%d}", i+1)
+			quotedPath := shellQuote(path)
+			cmd = strings.ReplaceAll(cmd, placeholder, quotedPath)
+		}
+		return cmd, nil
+	}
+
+	// Handle generic {filename} placeholder
+	if strings.Contains(cmd, "{filename}") {
+		if len(filePaths) == 1 {
+			// Single file: replace {filename}
+			quotedPath := shellQuote(filePaths[0])
+			cmd = strings.ReplaceAll(cmd, "{filename}", quotedPath)
+		} else {
+			// Multiple files: replace {filename} with all files space-separated
+			var quotedPaths []string
+			for _, path := range filePaths {
+				quotedPaths = append(quotedPaths, shellQuote(path))
+			}
+			cmd = strings.ReplaceAll(cmd, "{filename}", strings.Join(quotedPaths, " "))
+		}
 	}
 
 	return cmd, nil
