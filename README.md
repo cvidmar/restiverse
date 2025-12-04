@@ -2,6 +2,8 @@
 
 A terminal-based REST API client written in Go that bridges the gap between powerful command-line tools and the convenience of a unified interface.
 
+![Restiverse Screenshot](restiverse-screenshot.png)
+
 ## Features
 
 - **Terminal-native**: Built for developers who live in the terminal
