@@ -15,6 +15,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case directoryLoadedMsg:
+		// Preserve cursor position if we're reloading the same directory
+		oldCursor := m.cursor
+		oldEntriesLen := len(m.fileEntries)
+
 		m.fileEntries = msg.entries
 		m.cursor = 0
 		m.selectedFiles = make(map[int]bool)
@@ -28,6 +32,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.targetFileName = "" // Clear the target
+		} else if oldEntriesLen > 0 && oldCursor < len(m.fileEntries) {
+			// Preserve cursor position when reloading (e.g., after editing)
+			m.cursor = oldCursor
 		}
 		return m, nil
 
@@ -51,11 +58,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case historyLoadedMsg:
+		// Preserve cursor position if we're reloading the same file
+		oldHistoryCursor := m.historyCursor
+		oldResponsesLen := len(m.responses)
+		isReload := m.currentHTTPFile == msg.httpFile
+
 		m.currentHTTPFile = msg.httpFile
 		m.responses = msg.responses
 		m.historyCursor = 0
 		m.selectedResponses = make(map[int]bool)
 		m.currentView = ViewHistory
+
+		// Preserve cursor position when reloading (e.g., after executing a request or editing)
+		if isReload && oldResponsesLen > 0 && oldHistoryCursor < len(m.responses) {
+			m.historyCursor = oldHistoryCursor
+		}
 		return m, nil
 
 	case errMsg:
