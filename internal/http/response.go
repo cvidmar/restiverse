@@ -45,7 +45,7 @@ func SaveResponse(httpFilePath string, req *HTTPRequest, resp *Response, err err
 	timestamp := time.Now()
 	baseName := strings.TrimSuffix(filepath.Base(httpFilePath), ".http")
 	timestampStr := timestamp.Format("20060102_150405")
-	baseFilename := fmt.Sprintf(".%s_%s", baseName, timestampStr)
+	baseFilename := fmt.Sprintf("%s_%s", baseName, timestampStr)
 
 	metaPath := filepath.Join(responsesDir, baseFilename+".meta")
 	bodyPath := filepath.Join(responsesDir, baseFilename+".body")
@@ -114,7 +114,7 @@ func SaveResponseWithStream(httpFilePath string, req *HTTPRequest, resp *Respons
 	timestamp := time.Now()
 	baseName := strings.TrimSuffix(filepath.Base(httpFilePath), ".http")
 	timestampStr := timestamp.Format("20060102_150405")
-	baseFilename := fmt.Sprintf(".%s_%s", baseName, timestampStr)
+	baseFilename := fmt.Sprintf("%s_%s", baseName, timestampStr)
 
 	metaPath := filepath.Join(responsesDir, baseFilename+".meta")
 
@@ -181,7 +181,7 @@ func CleanupOldResponses(httpFilePath string, maxResponses int) error {
 
 	// Get base name for this HTTP file
 	baseName := strings.TrimSuffix(filepath.Base(httpFilePath), ".http")
-	prefix := "." + baseName + "_"
+	prefix := baseName + "_"
 
 	// Find all response files for this HTTP file
 	entries, err := os.ReadDir(responsesDir)

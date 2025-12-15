@@ -28,10 +28,10 @@ type Action struct {
 	FileTypes   []string `yaml:"file_types"`
 }
 
-// LoadConfig loads configuration from a .restiverse.yaml file
+// LoadConfig loads configuration from a restiverse.yaml file
 // If the file doesn't exist, it creates a default configuration
 func LoadConfig(dir string) (*Config, error) {
-	configPath := filepath.Join(dir, ".restiverse.yaml")
+	configPath := filepath.Join(dir, "restiverse.yaml")
 
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
@@ -89,14 +89,14 @@ func LoadConfigHierarchy(dir, baseDir string) (*Config, error) {
 	parts := strings.Split(relPath, string(filepath.Separator))
 	currentPath := baseDir
 
-	// For each subdirectory, check for .restiverse.yaml and merge
+	// For each subdirectory, check for restiverse.yaml and merge
 	for _, part := range parts {
 		if part == "." || part == "" {
 			continue
 		}
 		currentPath = filepath.Join(currentPath, part)
 
-		childConfigPath := filepath.Join(currentPath, ".restiverse.yaml")
+		childConfigPath := filepath.Join(currentPath, "restiverse.yaml")
 		if _, err := os.Stat(childConfigPath); err == nil {
 			// Child config exists, merge it
 			childConfig, err := LoadConfig(currentPath)

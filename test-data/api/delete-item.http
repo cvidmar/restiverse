@@ -1,0 +1,2 @@
+DELETE https://api.example.com/items/123
+Authorization: Bearer token123

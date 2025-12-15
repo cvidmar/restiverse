@@ -173,11 +173,11 @@ func ListResponseHistory(httpFilePath string) ([]ResponseEntry, error) {
 		name := entry.Name()
 
 		// Check if this file belongs to our .http file
-		if !strings.HasPrefix(name, "."+baseName+"_") {
+		if !strings.HasPrefix(name, baseName+"_") {
 			continue
 		}
 
-		// Extract timestamp from filename: .filename_YYYYMMDD_HHMMSS.{meta|body}
+		// Extract timestamp from filename: filename_YYYYMMDD_HHMMSS.{meta|body}
 		parts := strings.Split(name, ".")
 		if len(parts) < 2 {
 			continue

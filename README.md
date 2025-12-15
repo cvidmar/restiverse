@@ -81,16 +81,14 @@ Content-Type: application/json
 
 When you execute a request, Restiverse creates a `responses/` folder next to your `.http` file and stores:
 
-- `.FILENAME_YYYYMMDD_HHMMSS.meta` - Request/response metadata (YAML)
-- `.FILENAME_YYYYMMDD_HHMMSS.body` - Response body
-
-These files are hidden (start with `.`) to avoid clutter.
+- `FILENAME_YYYYMMDD_HHMMSS.meta` - Request/response metadata (YAML)
+- `FILENAME_YYYYMMDD_HHMMSS.body` - Response body
 
 **Automatic Cleanup:** By default, Restiverse keeps only the 5 most recent response files per `.http` file. When you execute a request and save a new response, older responses beyond the limit are automatically deleted. You can configure this with the `max_responses` setting (set to `0` for unlimited).
 
 ### Configuration
 
-Restiverse uses `.restiverse.yaml` for configuration. A default config is created automatically when you first run the app in a directory.
+Restiverse uses `restiverse.yaml` for configuration. A default config is created automatically when you first run the app in a directory.
 
 Example configuration:
 
@@ -209,7 +207,7 @@ Navigate to `api/users/get-users.http` and press `r` to execute!
 - 📝 **`.http` file parsing and execution** with all standard HTTP methods
 - 💾 **Response storage** with timestamped `.meta` (YAML) and `.body` files
 - 📊 **Response history view** with table layout showing status, duration, and size
-- ⚙️ **Action system** with configurable actions via `.restiverse.yaml`
+- ⚙️ **Action system** with configurable actions via `restiverse.yaml`
 - 🔍 **Fuzzy finder** with arrow key navigation (press `/`)
 - ✅ **Multi-selection** support (Space key)
 - ⏱️ **Request execution** with timeout and cancellation (ESC)
