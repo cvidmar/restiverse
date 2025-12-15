@@ -155,13 +155,40 @@ func (m model) renderFileBrowser() string {
 		return m.renderEmptyDirectory()
 	}
 
-	var items []string
+	var rows []string
 
-	for i, entry := range m.fileEntries {
-		items = append(items, m.renderFileEntry(i, entry))
+	// Check if we have any .http files to display the table header
+	hasHTTPFiles := false
+	for _, entry := range m.fileEntries {
+		if entry.IsHTTP {
+			hasHTTPFiles = true
+			break
+		}
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, items...)
+	// Add table header if we have .http files
+	if hasHTTPFiles {
+		// Calculate max filename length for better column widths
+		maxNameLen := 20
+		for _, entry := range m.fileEntries {
+			if entry.IsHTTP && len(entry.Name) > maxNameLen {
+				maxNameLen = len(entry.Name)
+			}
+		}
+		if maxNameLen > 40 {
+			maxNameLen = 40 // Cap at 40
+		}
+
+		header := fmt.Sprintf("  %-*s  %-6s  %s", maxNameLen, "File", "Method", "URL")
+		rows = append(rows, m.styles.TableHeader.Render(header))
+		rows = append(rows, strings.Repeat("─", m.width-4))
+	}
+
+	for i, entry := range m.fileEntries {
+		rows = append(rows, m.renderFileEntry(i, entry))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
 // renderFileEntry renders a single file or directory entry
@@ -172,21 +199,60 @@ func (m model) renderFileEntry(index int, entry files.FileEntry) string {
 
 	// Determine style
 	if isCursor {
-		style = m.styles.SelectedItem
+		style = m.styles.TableRowSelected
 	} else if isSelected {
 		style = m.styles.MarkedItem
 	} else if entry.IsDir {
 		style = m.styles.Directory
 	} else {
-		style = m.styles.File
+		style = m.styles.TableRow
 	}
 
-	// Format name
+	// Format selection prefix
 	prefix := "  "
 	if isSelected {
 		prefix = "* "
 	}
 
+	// For .http files, use table format
+	if entry.IsHTTP {
+		// Calculate max filename length (same as in renderFileBrowser)
+		maxNameLen := 20
+		for _, e := range m.fileEntries {
+			if e.IsHTTP && len(e.Name) > maxNameLen {
+				maxNameLen = len(e.Name)
+			}
+		}
+		if maxNameLen > 40 {
+			maxNameLen = 40
+		}
+
+		// Truncate name if too long
+		name := entry.Name
+		if len(name) > maxNameLen {
+			name = name[:maxNameLen-3] + "..."
+		}
+
+		// Truncate URL if too long
+		url := entry.URL
+		maxURLLen := m.width - maxNameLen - 20 // Leave space for name, method, and padding
+		if maxURLLen < 20 {
+			maxURLLen = 20
+		}
+		if len(url) > maxURLLen {
+			url = url[:maxURLLen-3] + "..."
+		}
+
+		method := entry.Method
+		if method == "" {
+			method = "?"
+		}
+
+		row := fmt.Sprintf("%s%-*s  %-6s  %s", prefix, maxNameLen, name, method, url)
+		return style.Render(row)
+	}
+
+	// For directories, use simple format
 	name := entry.Name
 	if entry.IsDir {
 		name = "/ " + name

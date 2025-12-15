@@ -345,7 +345,7 @@ func (m model) updateFuzzyFinder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Navigate to selected file
 		if len(m.searchResults) > 0 && m.cursor < len(m.searchResults) {
 			selectedFile := m.searchResults[m.cursor]
-			m.currentView = m.previousView
+			m.currentView = ViewFileBrowser // Always go to file browser when selecting a file
 			m.currentPath = filepath.Dir(selectedFile.Path)
 			m.targetFileName = filepath.Base(selectedFile.Path) // Remember which file to highlight
 			return m, m.loadDirectoryCmd()

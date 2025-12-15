@@ -17,6 +17,8 @@ type FileEntry struct {
 	IsHTTP    bool
 	ModTime   time.Time
 	Size      int64
+	URL       string // URL extracted from .http file (for HTTP files only)
+	Method    string // HTTP method extracted from .http file (for HTTP files only)
 }
 
 // FileType represents the type of a file for action filtering
@@ -59,6 +61,13 @@ func ListDirectory(dirPath string) ([]FileEntry, error) {
 			Size:    info.Size(),
 		}
 
+		// Extract URL and method for .http files
+		if fileEntry.IsHTTP {
+			method, url := extractHTTPInfo(fullPath)
+			fileEntry.Method = method
+			fileEntry.URL = url
+		}
+
 		// Only include directories and .http files
 		if fileEntry.IsDir || fileEntry.IsHTTP {
 			files = append(files, fileEntry)
@@ -74,6 +83,38 @@ func ListDirectory(dirPath string) ([]FileEntry, error) {
 	})
 
 	return files, nil
+}
+
+// extractHTTPInfo extracts the method and URL from a .http file
+// Returns empty strings if the file cannot be parsed
+func extractHTTPInfo(filePath string) (method, url string) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", ""
+	}
+	defer file.Close()
+
+	// Read only the first line
+	data := make([]byte, 512) // Read first 512 bytes
+	n, err := file.Read(data)
+	if err != nil && n == 0 {
+		return "", ""
+	}
+
+	// Find the first line
+	firstLine := string(data[:n])
+	if idx := strings.Index(firstLine, "\n"); idx != -1 {
+		firstLine = firstLine[:idx]
+	}
+
+	// Parse METHOD URL
+	parts := strings.Fields(strings.TrimSpace(firstLine))
+	if len(parts) >= 2 {
+		method = strings.ToUpper(parts[0])
+		url = parts[1]
+	}
+
+	return method, url
 }
 
 // GetFileType returns the file type for action filtering
