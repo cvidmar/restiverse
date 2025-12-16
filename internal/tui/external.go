@@ -227,3 +227,17 @@ func (m model) clearStatusAfter(seconds int) tea.Cmd {
 		return clearStatusMsg{}
 	})
 }
+
+// openConfigFile finds and opens the config file in the editor
+func (m model) openConfigFile() (model, tea.Cmd) {
+	// Find the config file starting from current directory
+	configPath := config.FindConfigFile(m.currentPath, m.baseDir)
+
+	if configPath == "" {
+		m.errorMessage = "No restiverse.yaml found in current or parent directories"
+		return m, nil
+	}
+
+	// Open the config file in the editor
+	return m, m.executeEditorCmd(configPath)
+}

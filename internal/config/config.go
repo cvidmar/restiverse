@@ -342,3 +342,50 @@ func (a *Action) IsInternal() bool {
 func (a *Action) GetInternalCommand() string {
 	return strings.TrimPrefix(a.Command, "internal:")
 }
+
+// FindConfigFile searches for restiverse.yaml starting from currentDir
+// and traveling up the directory tree until it reaches baseDir.
+// Returns the path to the config file, or empty string if not found.
+func FindConfigFile(currentDir, baseDir string) string {
+	// Ensure both paths are absolute
+	currentDir, err := filepath.Abs(currentDir)
+	if err != nil {
+		return ""
+	}
+	baseDir, err = filepath.Abs(baseDir)
+	if err != nil {
+		return ""
+	}
+
+	// Start from currentDir and walk up to baseDir
+	checkDir := currentDir
+	for {
+		// Check if restiverse.yaml exists in this directory
+		configPath := filepath.Join(checkDir, "restiverse.yaml")
+		if _, err := os.Stat(configPath); err == nil {
+			return configPath
+		}
+
+		// If we've reached the base directory and haven't found a config, stop
+		if checkDir == baseDir {
+			break
+		}
+
+		// Move up one directory
+		parentDir := filepath.Dir(checkDir)
+
+		// Prevent infinite loop (we've reached the root)
+		if parentDir == checkDir {
+			break
+		}
+
+		// Don't go above the base directory
+		if len(parentDir) < len(baseDir) {
+			break
+		}
+
+		checkDir = parentDir
+	}
+
+	return ""
+}

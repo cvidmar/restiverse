@@ -231,6 +231,8 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.promptForRenameFile()
 	case "D": // Shift+D for delete
 		return m.promptDeleteFile()
+	case "c":
+		return m.openConfigFile()
 	}
 
 	// Check for action keybindings
