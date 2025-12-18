@@ -35,3 +35,9 @@ actions:
     max_files: 1
     file_types:
       - http
+  - name: Copy as curl
+    command: internal:copy-as-curl
+    min_files: 1
+    max_files: 1
+    file_types:
+      - http

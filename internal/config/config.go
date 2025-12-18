@@ -202,6 +202,13 @@ func DefaultConfig() *Config {
 				FileTypes:  []string{"http"},
 			},
 			{
+				Name:       "Copy as curl",
+				Command:    "internal:copy-as-curl",
+				MinFiles:   1,
+				MaxFiles:   &maxOne,
+				FileTypes:  []string{"http"},
+			},
+			{
 				Name:       "Rename File",
 				Command:    "internal:rename",
 				Keybinding: "R",

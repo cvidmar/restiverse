@@ -33,3 +33,6 @@ go.work.sum
 
 # Test data responses
 test-data/**/responses/
+
+# Variable value files (user-specific configuration)
+*.vars

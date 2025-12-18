@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cvidmar/restiverse/internal/config"
 	"github.com/cvidmar/restiverse/internal/files"
+	"github.com/cvidmar/restiverse/internal/http"
+	"github.com/cvidmar/restiverse/internal/vars"
 )
 
 // showActionsForFile shows the action modal for a .http file
@@ -180,6 +183,8 @@ func (m model) executeInternalAction(action *config.Action) (model, tea.Cmd) {
 		return m.promptDeleteFile()
 	case "variables":
 		return m.showVariablesForCurrentFile()
+	case "copy-as-curl":
+		return m.copyAsCurl()
 	default:
 		m.errorMessage = "Unknown internal command: " + cmd
 		return m, nil
@@ -349,4 +354,64 @@ func (m model) getSelectedResponsePathsForAction(action *config.Action) []string
 		}
 	}
 	return paths
+}
+
+// copyAsCurl copies the current .http file as a curl command to clipboard
+func (m model) copyAsCurl() (model, tea.Cmd) {
+	if m.currentView != ViewFileBrowser || len(m.fileEntries) == 0 {
+		return m, nil
+	}
+
+	entry := m.fileEntries[m.cursor]
+	if !entry.IsHTTP {
+		m.errorMessage = "Not an HTTP file"
+		return m, nil
+	}
+
+	// Parse the HTTP file
+	req, err := http.ParseHTTPFile(entry.Path)
+	if err != nil {
+		m.errorMessage = "Failed to parse HTTP file: " + err.Error()
+		return m, nil
+	}
+
+	// Load variable values (from .vars file or most recent .meta file)
+	varValues, err := vars.LoadVariableValues(entry.Path)
+	if err != nil {
+		// If we can't load variables, try to get defaults from config
+		varNames := vars.ExtractVariables(req.URL)
+		for _, headerValue := range req.Headers {
+			varNames = append(varNames, vars.ExtractVariables(headerValue)...)
+		}
+		if req.HasBody() {
+			varNames = append(varNames, vars.ExtractVariables(req.Body)...)
+		}
+
+		if len(varNames) > 0 {
+			varValues, _ = vars.LoadDefaultValuesFromConfig(entry.Path, varNames)
+		}
+	}
+
+	// Interpolate variables in the request
+	if len(varValues) > 0 {
+		req.URL = vars.SubstituteVariables(req.URL, varValues)
+		for name, value := range req.Headers {
+			req.Headers[name] = vars.SubstituteVariables(value, varValues)
+		}
+		if req.HasBody() {
+			req.Body = vars.SubstituteVariables(req.Body, varValues)
+		}
+	}
+
+	// Generate curl command
+	curlCmd := req.ToCurlCommand()
+
+	// Copy to clipboard
+	if err := clipboard.WriteAll(curlCmd); err != nil {
+		m.errorMessage = "Failed to copy to clipboard: " + err.Error()
+		return m, nil
+	}
+
+	m.statusMessage = "Copied curl command to clipboard"
+	return m, m.clearStatusAfter(3)
 }

@@ -34,11 +34,18 @@ func ParseHTTPFile(filePath string) (*HTTPRequest, error) {
 		line := scanner.Text()
 		lineNum++
 
+		// Skip comment lines (lines starting with #)
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
 		// First line: METHOD URL
-		if lineNum == 1 {
+		if lineNum == 1 || (method == "" && url == "") {
 			parts := strings.Fields(line)
 			if len(parts) < 2 {
-				return nil, fmt.Errorf("invalid first line: expected 'METHOD URL', got '%s'", line)
+				// Skip if not a valid method line yet
+				continue
 			}
 			method = strings.ToUpper(parts[0])
 			url = parts[1]
@@ -46,7 +53,7 @@ func ParseHTTPFile(filePath string) (*HTTPRequest, error) {
 		}
 
 		// Empty line signals start of body
-		if strings.TrimSpace(line) == "" {
+		if trimmed == "" {
 			if !inBody {
 				inBody = true
 				continue
