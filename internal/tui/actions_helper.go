@@ -17,6 +17,21 @@ func (m model) showActionsForFile(entry files.FileEntry) (model, tea.Cmd) {
 	}
 
 	applicable := m.config.FilterActions(fileTypes, selectedCount)
+
+	// Add "Variables" pseudo-action if file has variables and config has vars
+	if len(m.config.Vars) > 0 && checkFileHasVariables(entry.Path) {
+		maxOne := 1
+		variablesAction := config.Action{
+			Name:       "Variables",
+			Command:    "internal:variables",
+			Keybinding: "v",
+			MinFiles:   1,
+			MaxFiles:   &maxOne,
+			FileTypes:  []string{"http"},
+		}
+		applicable = append([]config.Action{variablesAction}, applicable...)
+	}
+
 	if len(applicable) == 0 {
 		m.statusMessage = "No actions available"
 		return m, nil
@@ -163,10 +178,26 @@ func (m model) executeInternalAction(action *config.Action) (model, tea.Cmd) {
 		return m.promptForRenameFile()
 	case "delete":
 		return m.promptDeleteFile()
+	case "variables":
+		return m.showVariablesForCurrentFile()
 	default:
 		m.errorMessage = "Unknown internal command: " + cmd
 		return m, nil
 	}
+}
+
+// showVariablesForCurrentFile shows variable selection for the current file
+func (m model) showVariablesForCurrentFile() (model, tea.Cmd) {
+	if m.currentView != ViewFileBrowser || len(m.fileEntries) == 0 {
+		return m, nil
+	}
+
+	entry := m.fileEntries[m.cursor]
+	if !entry.IsHTTP {
+		return m, nil
+	}
+
+	return m.showVariableSelection(entry)
 }
 
 // showHistory shows the history view for the current .http file

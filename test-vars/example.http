@@ -1,0 +1,3 @@
+GET https://srv-{node}.{environ}.example.com/api
+Authorization: Bearer token-placeholder
+Content-Type: application/json

@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	httpPkg "github.com/cvidmar/restiverse/internal/http"
+	"github.com/cvidmar/restiverse/internal/vars"
 )
 
 // executeHTTPRequest executes an HTTP request from a .http file
@@ -39,6 +40,49 @@ func (m model) executeRequestCmd(httpFilePath string) tea.Cmd {
 			return requestErrorMsg{fmt.Errorf("failed to parse .http file: %w", err)}
 		}
 
+		// Extract variables from the request
+		varNames := vars.ExtractVariables(req.URL)
+		for _, headerVal := range req.Headers {
+			headerVars := vars.ExtractVariables(headerVal)
+			for _, v := range headerVars {
+				found := false
+				for _, existing := range varNames {
+					if existing == v {
+						found = true
+						break
+					}
+				}
+				if !found {
+					varNames = append(varNames, v)
+				}
+			}
+		}
+
+		// Load or get default variable values
+		var varValues vars.VarValues
+		if len(varNames) > 0 {
+			// Try to load from most recent .meta file
+			varValues, _ = vars.LoadVariableValues(httpFilePath)
+
+			// Fill in missing values with defaults from config
+			defaultValues := vars.GetDefaultValues(m.config.Vars, varNames)
+			if varValues == nil {
+				varValues = defaultValues
+			} else {
+				for name, value := range defaultValues {
+					if _, ok := varValues[name]; !ok {
+						varValues[name] = value
+					}
+				}
+			}
+
+			// Substitute variables in URL and headers
+			req.URL = vars.SubstituteVariables(req.URL, varValues)
+			for name, value := range req.Headers {
+				req.Headers[name] = vars.SubstituteVariables(value, varValues)
+			}
+		}
+
 		// Create context with timeout
 		ctx, cancel := context.WithTimeout(context.Background(), m.config.Timeout)
 		defer cancel()
@@ -47,7 +91,7 @@ func (m model) executeRequestCmd(httpFilePath string) tea.Cmd {
 		resp, err := httpPkg.ExecuteRequest(ctx, req)
 
 		// Save response (even if there was an error)
-		saveErr := httpPkg.SaveResponse(httpFilePath, req, resp, err)
+		saveErr := httpPkg.SaveResponse(httpFilePath, req, resp, varValues, err)
 		if saveErr != nil {
 			return requestErrorMsg{fmt.Errorf("failed to save response: %w", saveErr)}
 		}

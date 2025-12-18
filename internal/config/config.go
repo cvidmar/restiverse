@@ -12,10 +12,11 @@ import (
 
 // Config represents the complete configuration for Restiverse
 type Config struct {
-	Timeout      time.Duration `yaml:"timeout"`
-	Editor       string        `yaml:"editor"`
-	MaxResponses int           `yaml:"max_responses,omitempty"` // Max response files to keep per .http file (0 = unlimited)
-	Actions      []Action      `yaml:"actions"`
+	Timeout      time.Duration           `yaml:"timeout"`
+	Editor       string                  `yaml:"editor"`
+	MaxResponses int                     `yaml:"max_responses,omitempty"` // Max response files to keep per .http file (0 = unlimited)
+	Actions      []Action                `yaml:"actions"`
+	Vars         map[string][]string     `yaml:"vars,omitempty"` // Custom variables for URL substitution
 }
 
 // Action represents a configurable action that can be performed on files
@@ -118,6 +119,7 @@ func MergeConfigs(parent, child *Config) *Config {
 		Editor:       child.Editor,
 		MaxResponses: child.MaxResponses,
 		Actions:      make([]Action, 0),
+		Vars:         make(map[string][]string),
 	}
 
 	// If child doesn't set timeout, use parent's
@@ -151,6 +153,16 @@ func MergeConfigs(parent, child *Config) *Config {
 	// Convert back to slice
 	for _, action := range actionMap {
 		merged.Actions = append(merged.Actions, action)
+	}
+
+	// Merge vars: start with parent vars
+	for name, values := range parent.Vars {
+		merged.Vars[name] = values
+	}
+
+	// Override with child vars
+	for name, values := range child.Vars {
+		merged.Vars[name] = values
 	}
 
 	return merged

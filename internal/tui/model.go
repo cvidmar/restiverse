@@ -19,6 +19,7 @@ const (
 	ViewFuzzyFinder
 	ViewInputModal
 	ViewConfirmModal
+	ViewVariableSelect
 )
 
 // model represents the application state
@@ -63,6 +64,14 @@ type model struct {
 	confirmTitle   string
 	confirmMessage string
 	confirmAction  func(model) (model, tea.Cmd) // Callback for confirmed action
+
+	// Variable selection state
+	varSelectHTTPFile string            // HTTP file being configured
+	varNames          []string          // Variable names to configure
+	varValues         map[string]string // Current values
+	varDefinitions    map[string][]string // Available values from config
+	varCurrentIdx     int               // Index of variable being configured
+	varOptionCursor   int               // Cursor position in options list
 
 	// HTTP execution state
 	requestRunning bool

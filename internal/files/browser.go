@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cvidmar/restiverse/internal/vars"
 )
 
 // FileEntry represents a file or directory in the browser
@@ -63,7 +65,7 @@ func ListDirectory(dirPath string) ([]FileEntry, error) {
 
 		// Extract URL and method for .http files
 		if fileEntry.IsHTTP {
-			method, url := extractHTTPInfo(fullPath)
+			method, url := extractHTTPInfoWithVars(fullPath)
 			fileEntry.Method = method
 			fileEntry.URL = url
 		}
@@ -114,6 +116,36 @@ func extractHTTPInfo(filePath string) (method, url string) {
 		url = parts[1]
 	}
 
+	return method, url
+}
+
+// extractHTTPInfoWithVars extracts the method and URL from a .http file
+// and formats the URL with current variable values (e.g., {node:a})
+func extractHTTPInfoWithVars(filePath string) (method, url string) {
+	method, url = extractHTTPInfo(filePath)
+	if url == "" {
+		return method, url
+	}
+
+	// Extract variables from URL
+	varNames := vars.ExtractVariables(url)
+	if len(varNames) == 0 {
+		return method, url
+	}
+
+	// Load variable values (from .vars file or most recent .meta)
+	varValues, err := vars.LoadVariableValues(filePath)
+	if err != nil || len(varValues) == 0 {
+		// Try to load defaults from config
+		varValues, _ = vars.LoadDefaultValuesFromConfig(filePath, varNames)
+	}
+
+	if len(varValues) == 0 {
+		return method, url
+	}
+
+	// Format URL with variable values
+	url = vars.FormatURLWithVarValues(url, varValues)
 	return method, url
 }
 

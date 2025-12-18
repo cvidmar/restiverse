@@ -32,6 +32,8 @@ func (m model) View() string {
 		content = m.renderInputModal()
 	case ViewConfirmModal:
 		content = m.renderConfirmModal()
+	case ViewVariableSelect:
+		content = m.renderVariableSelect()
 	}
 
 	// Build the full UI
@@ -81,6 +83,8 @@ func (m model) renderTopBar() string {
 		title = "Restiverse — " + m.inputTitle
 	case ViewConfirmModal:
 		title = "Restiverse — " + m.confirmTitle
+	case ViewVariableSelect:
+		title = "Restiverse — Configure Variables"
 	}
 
 	return m.styles.TopBar.
@@ -503,3 +507,63 @@ func (m model) renderConfirmModal() string {
 		lipgloss.WithWhitespaceForeground(lipgloss.AdaptiveColor{Light: "#999", Dark: "#666"}),
 	)
 }
+
+// renderVariableSelect renders the variable selection modal
+func (m model) renderVariableSelect() string {
+	if len(m.varNames) == 0 {
+		return m.styles.Modal.Render("No variables to configure")
+	}
+
+	var items []string
+
+	// Title
+	currentVar := m.varNames[m.varCurrentIdx]
+	title := fmt.Sprintf("Configure Variable: %s (%d/%d)", currentVar, m.varCurrentIdx+1, len(m.varNames))
+	items = append(items, m.styles.ModalTitle.Render(title))
+	items = append(items, "")
+
+	// Options
+	options := m.varDefinitions[currentVar]
+	for i, option := range options {
+		var itemStr string
+		if i == m.varOptionCursor {
+			itemStr = m.styles.SelectedItem.Render("▸ " + option)
+		} else {
+			itemStr = "  " + option
+		}
+		items = append(items, itemStr)
+	}
+
+	items = append(items, "")
+
+	// Show current values for all variables
+	items = append(items, m.styles.HelpText.Render("Current values:"))
+	for i, varName := range m.varNames {
+		if value, ok := m.varValues[varName]; ok {
+			indicator := " "
+			if i == m.varCurrentIdx {
+				indicator = "▸"
+			}
+			items = append(items, fmt.Sprintf("%s %s: %s", indicator, varName, value))
+		}
+	}
+
+	items = append(items, "")
+	items = append(items, m.styles.HelpText.Render("↑/↓ to select | Enter to confirm | ESC to cancel"))
+
+	content := lipgloss.JoinVertical(lipgloss.Left, items...)
+
+	modal := m.styles.Modal.Render(content)
+
+	// Center the modal
+	return lipgloss.Place(
+		m.width,
+		m.height-2,
+		lipgloss.Center,
+		lipgloss.Center,
+		modal,
+		lipgloss.WithWhitespaceChars(" "),
+		lipgloss.WithWhitespaceForeground(lipgloss.AdaptiveColor{Light: "#999", Dark: "#666"}),
+	)
+}
+

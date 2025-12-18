@@ -19,6 +19,7 @@ type ResponseMetadata struct {
 	Error      string            `yaml:"error,omitempty"`
 	Request    RequestMetadata   `yaml:"request"`
 	Response   ResponseHeaders   `yaml:"response,omitempty"`
+	Vars       map[string]string `yaml:"vars,omitempty"` // Variable values used in this request
 }
 
 // RequestMetadata represents the request portion of metadata
@@ -34,7 +35,7 @@ type ResponseHeaders struct {
 }
 
 // SaveResponse saves an HTTP response to .meta and .body files
-func SaveResponse(httpFilePath string, req *HTTPRequest, resp *Response, err error) error {
+func SaveResponse(httpFilePath string, req *HTTPRequest, resp *Response, varValues map[string]string, err error) error {
 	// Get responses directory
 	responsesDir := filepath.Join(filepath.Dir(httpFilePath), "responses")
 	if err := os.MkdirAll(responsesDir, 0755); err != nil {
@@ -53,6 +54,7 @@ func SaveResponse(httpFilePath string, req *HTTPRequest, resp *Response, err err
 	// Build metadata
 	meta := ResponseMetadata{
 		Timestamp: timestamp.Format(time.RFC3339),
+		Vars:      varValues,
 	}
 
 	// Add request metadata
@@ -106,7 +108,7 @@ func SaveResponse(httpFilePath string, req *HTTPRequest, resp *Response, err err
 }
 
 // SaveResponseWithStream saves an HTTP response when the body was streamed to a file
-func SaveResponseWithStream(httpFilePath string, req *HTTPRequest, resp *Response, bodyPath string, err error) error {
+func SaveResponseWithStream(httpFilePath string, req *HTTPRequest, resp *Response, bodyPath string, varValues map[string]string, err error) error {
 	// Get responses directory
 	responsesDir := filepath.Join(filepath.Dir(httpFilePath), "responses")
 
@@ -121,6 +123,7 @@ func SaveResponseWithStream(httpFilePath string, req *HTTPRequest, resp *Respons
 	// Build metadata
 	meta := ResponseMetadata{
 		Timestamp: timestamp.Format(time.RFC3339),
+		Vars:      varValues,
 	}
 
 	// Add request metadata

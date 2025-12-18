@@ -136,7 +136,7 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		// Close modals
-		if m.currentView == ViewActionModal || m.currentView == ViewFuzzyFinder || m.currentView == ViewInputModal || m.currentView == ViewConfirmModal {
+		if m.currentView == ViewActionModal || m.currentView == ViewFuzzyFinder || m.currentView == ViewInputModal || m.currentView == ViewConfirmModal || m.currentView == ViewVariableSelect {
 			m.currentView = m.previousView
 			return m, nil
 		}
@@ -163,6 +163,8 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateInputModal(msg)
 	case ViewConfirmModal:
 		return m.updateConfirmModal(msg)
+	case ViewVariableSelect:
+		return m.updateVariableSelect(msg)
 	}
 
 	return m, nil
