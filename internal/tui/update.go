@@ -235,6 +235,13 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.promptDeleteFile()
 	case "c":
 		return m.openConfigFile()
+	case "v": // Variables configuration
+		if len(m.fileEntries) > 0 {
+			entry := m.fileEntries[m.cursor]
+			if entry.IsHTTP && len(m.config.Vars) > 0 && checkFileHasVariables(entry.Path) {
+				return m.showVariableSelection(entry)
+			}
+		}
 	}
 
 	// Check for action keybindings
