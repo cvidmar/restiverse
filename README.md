@@ -8,6 +8,7 @@ A terminal-based REST API client written in Go that bridges the gap between powe
 
 - **Terminal-native**: Built for developers who live in the terminal
 - **File-based workflow**: All requests and responses are files that can be versioned, shared, and scripted
+- **Variable substitution**: Dynamic URLs and headers for different environments (dev/staging/prod)
 - **Midnight Commander-style navigation**: Familiar and efficient directory browsing
 - **Configurable actions**: Execute custom commands on response files
 - **Large output friendly**: Designed to handle massive JSON responses
@@ -63,6 +64,38 @@ Content-Type: application/json
 }
 ```
 
+### Variable Substitution
+
+Use variables in your requests for dynamic URLs and headers across different environments:
+
+```http
+GET https://srv-{node}.{environ}.example.com/api
+Authorization: Bearer {token}
+```
+
+Define available values in `restiverse.yaml` (example):
+
+```yaml
+vars:
+  environ:
+    - stage
+    - prod
+  node:
+    - a
+    - b
+    - c
+  token:
+    - staging-token-xyz
+    - prod-token-abc
+```
+
+**Using variables:**
+- Press **v** on any `.http` file to configure variable values
+- Navigate through variables and select values with arrow keys
+- Values are saved in `.vars` files and remembered for future requests
+- The file browser shows current values: `https://srv-{node:a}.{environ:stage}.example.com/api`
+- Variables are automatically substituted when executing requests
+
 ### Navigation
 
 - **Arrow Keys (↑/↓)**: Navigate through files and folders
@@ -70,6 +103,7 @@ Content-Type: application/json
 - **Backspace**: Navigate to parent directory
 - **Space**: Multi-select files
 - **n**: Create new `.http` file (opens in `$EDITOR`)
+- **v**: Configure variables (when `.http` file with variables is selected)
 - **r**: Execute HTTP request (when `.http` file is selected)
 - **h**: View response history
 - **e**: Edit file in your `$EDITOR`
@@ -101,6 +135,16 @@ editor: $EDITOR
 
 # Response history management
 max_responses: 5  # Keep only the 5 most recent responses per .http file (0 = unlimited)
+
+# Variable definitions for URL/header substitution
+vars:
+  environ:
+    - stage
+    - prod
+  node:
+    - a
+    - b
+    - c
 
 # Actions
 actions:
@@ -213,12 +257,12 @@ Navigate to `api/users/get-users.http` and press `r` to execute!
 - ⏱️ **Request execution** with timeout and cancellation (ESC)
 - 🌳 **Configuration hierarchy** with child folder override support
 - 🛠️ **External tool integration** with proper terminal handoff
-- ⌨️ **Action keybindings** (r, e, h, n, etc.)
+- ⌨️ **Action keybindings** (r, e, h, n, v, etc.)
 - ✏️ **File creation** - press 'n' to create new `.http` files
 - 🔐 **Credential masking** in `.meta` files (Authorization headers)
+- 🔄 **Variable substitution** for dynamic URLs and headers across environments (press 'v')
 
 ⏳ **Not Yet Implemented (Future Enhancements):**
-- Environment/variable system for different environments (dev/staging/prod)
 - OAuth flows and dynamic token generation
 - GraphQL/WebSocket/gRPC support
 - Pre-request scripts and response assertions
