@@ -103,13 +103,17 @@ vars:
 - **Backspace**: Navigate to parent directory
 - **Space**: Multi-select files
 - **n**: Create new `.http` file (opens in `$EDITOR`)
+- **R**: Rename selected file
+- **D**: Duplicate selected `.http` file (asks for a filename, defaults to `NAME-copy.http`)
+- **X**: Delete selected file (asks for confirmation)
 - **v**: Configure variables (when `.http` file with variables is selected)
 - **r**: Execute HTTP request (when `.http` file is selected)
 - **h**: View response history
 - **e**: Edit file in your `$EDITOR`
 - **/**: Open fuzzy finder (use arrow keys to navigate results)
 - **ESC**: Close modals/cancel operations
-- **q** or **Ctrl+C**: Quit
+- **q**: Quit (asks for confirmation)
+- **Ctrl+C**: Quit immediately
 
 ### Response Storage
 

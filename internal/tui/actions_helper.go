@@ -179,6 +179,8 @@ func (m model) executeInternalAction(action *config.Action) (model, tea.Cmd) {
 		return m.showHistory()
 	case "rename":
 		return m.promptForRenameFile()
+	case "duplicate":
+		return m.promptDuplicateFile()
 	case "delete":
 		return m.promptDeleteFile()
 	case "variables":

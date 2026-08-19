@@ -55,10 +55,11 @@ type model struct {
 	searchResults []files.FileEntry
 
 	// Input modal state
-	inputField      textinput.Model
-	inputMode       string // "create", "rename"
-	inputTitle      string
-	renameTargetIdx int // For rename operations
+	inputField         textinput.Model
+	inputMode          string // "create", "rename", "duplicate"
+	inputTitle         string
+	renameTargetIdx    int // For rename operations
+	duplicateTargetIdx int // For duplicate operations
 
 	// Confirm modal state
 	confirmTitle   string

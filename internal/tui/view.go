@@ -131,7 +131,7 @@ func (m model) renderHelpHints() string {
 		if m.cursor < len(m.fileEntries) {
 			info += " | " + m.fileEntries[m.cursor].Name
 		}
-		hints = []string{info, "n new", "c config", "R rename", "D delete", "/ fuzzy", "q quit"}
+		hints = []string{info, "n new", "c config", "R rename", "D duplicate", "X delete", "/ fuzzy", "q quit"}
 
 	case ViewHistory:
 		info := fmt.Sprintf("%d responses", len(m.responses))

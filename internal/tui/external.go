@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cvidmar/restiverse/internal/config"
+	"github.com/cvidmar/restiverse/internal/files"
 )
 
 // executeExternalAction executes an external tool/command
@@ -90,7 +93,7 @@ func (m model) createHTTPFileWithName(filename string) (model, tea.Cmd) {
 	}
 
 	// Add .http extension if not present
-	if len(filename) < 5 || filename[len(filename)-5:] != ".http" {
+	if !files.IsHTTPFileName(filename) {
 		filename = filename + ".http"
 	}
 
@@ -173,6 +176,70 @@ func (m model) renameFileWithName(newName string) (model, tea.Cmd) {
 
 	m.currentView = ViewFileBrowser
 	m.statusMessage = fmt.Sprintf("Renamed '%s' to '%s'", entry.Name, newName)
+	return m, tea.Batch(m.loadDirectoryCmd(), m.clearStatusAfter(3))
+}
+
+// promptDuplicateFile shows the input modal for duplicating a file,
+// prefilled with the original name plus a "-copy" suffix
+func (m model) promptDuplicateFile() (model, tea.Cmd) {
+	if len(m.fileEntries) == 0 {
+		return m, nil
+	}
+
+	entry := m.fileEntries[m.cursor]
+	if entry.IsDir {
+		m.errorMessage = "Cannot duplicate directories"
+		return m, nil
+	}
+
+	ext := filepath.Ext(entry.Name)
+	defaultName := strings.TrimSuffix(entry.Name, ext) + "-copy" + ext
+
+	m.previousView = m.currentView
+	m.currentView = ViewInputModal
+	m.inputMode = "duplicate"
+	m.inputTitle = "Duplicate File"
+	m.duplicateTargetIdx = m.cursor
+	m.inputField.SetValue(defaultName)
+	m.inputField.Placeholder = defaultName
+	m.inputField.Focus()
+	return m, nil
+}
+
+// duplicateFileWithName copies the file at the target index to the given filename
+func (m model) duplicateFileWithName(newName string) (model, tea.Cmd) {
+	if len(newName) == 0 {
+		m.errorMessage = "Filename cannot be empty"
+		return m, nil
+	}
+
+	if m.duplicateTargetIdx >= len(m.fileEntries) {
+		m.errorMessage = "Invalid file selection"
+		return m, nil
+	}
+
+	entry := m.fileEntries[m.duplicateTargetIdx]
+	newPath := m.currentPath + "/" + newName
+
+	// Check if target already exists
+	if _, err := os.Stat(newPath); err == nil {
+		m.errorMessage = fmt.Sprintf("File '%s' already exists", newName)
+		return m, nil
+	}
+
+	content, err := os.ReadFile(entry.Path)
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to read '%s': %v", entry.Name, err)
+		return m, nil
+	}
+
+	if err := os.WriteFile(newPath, content, 0644); err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to duplicate: %v", err)
+		return m, nil
+	}
+
+	m.currentView = ViewFileBrowser
+	m.statusMessage = fmt.Sprintf("Duplicated '%s' to '%s'", entry.Name, newName)
 	return m, tea.Batch(m.loadDirectoryCmd(), m.clearStatusAfter(3))
 }
 

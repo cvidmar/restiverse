@@ -118,9 +118,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeyPress routes key presses to the appropriate handler based on current view
 func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Global keybindings
-	if matches(msg, m.keys.Quit) {
+	// Dismiss any status message so the help hints come back. Handlers below can
+	// still set a new one for the action they perform
+	m.statusMessage = ""
+
+	// Global keybindings. Ctrl+C quits immediately, 'q' asks for confirmation
+	if msg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
+	}
+
+	if matches(msg, m.keys.Quit) && m.quitKeyActive() {
+		return m.promptQuit()
 	}
 
 	if matches(msg, m.keys.Cancel) {
@@ -167,6 +175,29 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateVariableSelect(msg)
 	}
 
+	return m, nil
+}
+
+// quitKeyActive reports whether the 'q' shortcut applies to the current view.
+// Views with a focused text input consume printable keys, and the confirm modal
+// already owns the confirmTitle/confirmMessage/confirmAction state
+func (m model) quitKeyActive() bool {
+	switch m.currentView {
+	case ViewFuzzyFinder, ViewInputModal, ViewConfirmModal:
+		return false
+	}
+	return true
+}
+
+// promptQuit shows the confirmation modal for quitting
+func (m model) promptQuit() (model, tea.Cmd) {
+	m.previousView = m.currentView
+	m.currentView = ViewConfirmModal
+	m.confirmTitle = "Quit"
+	m.confirmMessage = "Quit Restiverse?"
+	m.confirmAction = func(model model) (model, tea.Cmd) {
+		return model, tea.Quit
+	}
 	return m, nil
 }
 
@@ -231,7 +262,9 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.promptForNewHTTPFile()
 	case "R": // Shift+R for rename
 		return m.promptForRenameFile()
-	case "D": // Shift+D for delete
+	case "D": // Shift+D for duplicate
+		return m.promptDuplicateFile()
+	case "X": // Shift+X for delete
 		return m.promptDeleteFile()
 	case "c":
 		return m.openConfigFile()
@@ -337,15 +370,15 @@ func (m model) updateFuzzyFinder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Clear error on any key press
 	m.errorMessage = ""
 
-	// Handle navigation in results
-	if matches(msg, m.keys.Up) {
+	// Handle navigation in results (arrow keys only, letters go to the search input)
+	if msg.Type == tea.KeyUp {
 		if m.cursor > 0 {
 			m.cursor--
 		}
 		return m, nil
 	}
 
-	if matches(msg, m.keys.Down) {
+	if msg.Type == tea.KeyDown {
 		if m.cursor < len(m.searchResults)-1 {
 			m.cursor++
 		}
@@ -384,6 +417,8 @@ func (m model) updateInputModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.createHTTPFileWithName(value)
 		case "rename":
 			return m.renameFileWithName(value)
+		case "duplicate":
+			return m.duplicateFileWithName(value)
 		}
 
 		m.currentView = m.previousView

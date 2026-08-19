@@ -32,6 +32,11 @@ const (
 	FileTypeMeta FileType = "meta"
 )
 
+// IsHTTPFileName reports whether name has the .http extension, ignoring case
+func IsHTTPFileName(name string) bool {
+	return strings.EqualFold(filepath.Ext(name), ".http")
+}
+
 // ListDirectory returns all files and directories in the given path
 // Folders are listed first, then .http files
 func ListDirectory(dirPath string) ([]FileEntry, error) {
@@ -58,7 +63,7 @@ func ListDirectory(dirPath string) ([]FileEntry, error) {
 			Name:    entry.Name(),
 			Path:    fullPath,
 			IsDir:   entry.IsDir(),
-			IsHTTP:  !entry.IsDir() && strings.HasSuffix(entry.Name(), ".http"),
+			IsHTTP:  !entry.IsDir() && IsHTTPFileName(entry.Name()),
 			ModTime: info.ModTime(),
 			Size:    info.Size(),
 		}
@@ -334,7 +339,7 @@ func FindAllHTTPFiles(rootDir string) ([]string, error) {
 		}
 
 		// Add .http files
-		if !info.IsDir() && strings.HasSuffix(info.Name(), ".http") {
+		if !info.IsDir() && IsHTTPFileName(info.Name()) {
 			httpFiles = append(httpFiles, path)
 		}
 

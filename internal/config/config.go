@@ -217,9 +217,17 @@ func DefaultConfig() *Config {
 				FileTypes:  []string{"http"},
 			},
 			{
+				Name:       "Duplicate File",
+				Command:    "internal:duplicate",
+				Keybinding: "D",
+				MinFiles:   1,
+				MaxFiles:   &maxOne,
+				FileTypes:  []string{"http"},
+			},
+			{
 				Name:       "Delete File",
 				Command:    "internal:delete",
-				Keybinding: "D",
+				Keybinding: "X",
 				MinFiles:   1,
 				MaxFiles:   &maxOne,
 				FileTypes:  []string{"http"},

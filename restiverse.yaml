@@ -38,9 +38,16 @@ actions:
       max_files: 1
       file_types:
         - http
+    - name: Duplicate File
+      command: internal:duplicate
+      keybinding: D
+      min_files: 1
+      max_files: 1
+      file_types:
+        - http
     - name: Delete File
       command: internal:delete
-      keybinding: D
+      keybinding: X
       min_files: 1
       max_files: 1
       file_types:
