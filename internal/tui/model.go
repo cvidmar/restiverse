@@ -56,10 +56,11 @@ type model struct {
 
 	// Input modal state
 	inputField         textinput.Model
-	inputMode          string // "create", "rename", "duplicate"
+	inputMode          string // "create", "rename", "duplicate", "custom-command"
 	inputTitle         string
-	renameTargetIdx    int // For rename operations
-	duplicateTargetIdx int // For duplicate operations
+	renameTargetIdx    int      // For rename operations
+	duplicateTargetIdx int      // For duplicate operations
+	customCmdPaths     []string // Files a custom command applies to
 
 	// Confirm modal state
 	confirmTitle   string

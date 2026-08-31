@@ -37,8 +37,12 @@ restiverse
 # Start in a specific directory
 restiverse ~/api-tests
 
-# Enable debug logging
+# Enable debug logging (writes restiverse-debug.log)
 DEBUG=1 restiverse .
+
+# Help and version
+restiverse --help
+restiverse --version
 ```
 
 ## Usage
@@ -62,6 +66,14 @@ Content-Type: application/json
   "name": "John Doe",
   "email": "john@example.com"
 }
+```
+
+Lines starting with `#` are comments and are ignored:
+
+```http
+# Fetch the user list
+GET https://api.example.com/users
+Accept: application/json
 ```
 
 ### Variable Substitution
@@ -106,6 +118,7 @@ vars:
 - **R**: Rename selected file
 - **D**: Duplicate selected `.http` file (asks for a filename, defaults to `NAME-copy.http`)
 - **X**: Delete selected file (asks for confirmation)
+- **c**: Open the nearest `restiverse.yaml` in your `$EDITOR`
 - **v**: Configure variables (when `.http` file with variables is selected)
 - **r**: Execute HTTP request (when `.http` file is selected)
 - **h**: View response history
@@ -114,6 +127,22 @@ vars:
 - **ESC**: Close modals/cancel operations
 - **q**: Quit (asks for confirmation)
 - **Ctrl+C**: Quit immediately
+
+### Actions Menu
+
+Press **Enter** on a `.http` file, or on a response in the history view, to open the actions menu. It lists every action from `restiverse.yaml` that applies to the current selection, sorted by name, plus a few built-ins:
+
+- **Copy as curl** (`.http` files): copies the request — with variables substituted — to the clipboard as a `curl` command
+- **Variables** (`.http` files with variables): opens the variable configuration modal
+- **Custom command…** (responses): run a one-off command without adding it to `restiverse.yaml`
+
+**Custom command** opens a text box, substitutes `{filename}` with the selected response body (or `{filename1}`, `{filename2}`, … for multi-selection), and runs it in your shell with full terminal handoff — exactly like a configured action, so pipes and interactive pagers work:
+
+```
+jq '.items[] | select(.active)' {filename} | fx
+```
+
+Nothing is saved: the next custom command starts from an empty box. Once a one-off proves useful, add it to `restiverse.yaml` as a named action.
 
 ### Response Storage
 
@@ -126,7 +155,7 @@ When you execute a request, Restiverse creates a `responses/` folder next to you
 
 ### Configuration
 
-Restiverse uses `restiverse.yaml` for configuration. A default config is created automatically when you first run the app in a directory.
+Restiverse uses `restiverse.yaml` for configuration. A default config is created automatically when you first run the app in a directory. Beyond the actions shown below, the generated default also includes `Copy as curl`, `Rename File`, `Duplicate File`, `Delete File`, `View Meta` and `Delete Response`.
 
 Example configuration:
 
@@ -210,6 +239,30 @@ actions:
     file_types: ["body"]
 ```
 
+Placeholders:
+
+- `{filename}` - the selected file (or all selected files, space-separated)
+- `{filename1}`, `{filename2}`, … - the selected files individually
+
+All paths are shell-quoted before substitution. Commands run via `sh -c`, so pipes and redirection work.
+
+### Internal Commands
+
+Actions whose `command` starts with `internal:` are handled by Restiverse itself instead of the shell:
+
+| Command | Description |
+| --- | --- |
+| `internal:execute` | Execute the request (default keybinding `r`) |
+| `internal:history` | Open the response history (default keybinding `h`) |
+| `internal:variables` | Configure variable values (keybinding `v`) |
+| `internal:copy-as-curl` | Copy the request to the clipboard as a `curl` command |
+| `internal:custom-command` | Prompt for a one-off shell command |
+| `internal:rename` | Rename the selected file (default keybinding `R`) |
+| `internal:duplicate` | Duplicate the selected file (default keybinding `D`) |
+| `internal:delete` | Delete the selected file, with confirmation (default keybinding `X`) |
+
+Keybindings are optional; actions without one are still available from the actions menu. Conflicting keybindings are rejected at startup.
+
 ## Example Workflow
 
 1. Create a directory for your API tests:
@@ -255,13 +308,16 @@ Navigate to `api/users/get-users.http` and press `r` to execute!
 - 📝 **`.http` file parsing and execution** with all standard HTTP methods
 - 💾 **Response storage** with timestamped `.meta` (YAML) and `.body` files
 - 📊 **Response history view** with table layout showing status, duration, and size
-- ⚙️ **Action system** with configurable actions via `restiverse.yaml`
+- ⚙️ **Action system** with configurable actions via `restiverse.yaml`, sorted by name in the menu
+- 🧪 **One-off custom commands** on responses, without editing the config
+- 📋 **Copy as curl** with variables substituted
+- 🗃️ **File management** - rename (`R`), duplicate (`D`) and delete (`X`) `.http` files
 - 🔍 **Fuzzy finder** with arrow key navigation (press `/`)
 - ✅ **Multi-selection** support (Space key)
 - ⏱️ **Request execution** with timeout and cancellation (ESC)
 - 🌳 **Configuration hierarchy** with child folder override support
 - 🛠️ **External tool integration** with proper terminal handoff
-- ⌨️ **Action keybindings** (r, e, h, n, v, etc.)
+- ⌨️ **Action keybindings** (r, e, h, R, D, X, plus v and c)
 - ✏️ **File creation** - press 'n' to create new `.http` files
 - 🔐 **Credential masking** in `.meta` files (Authorization headers)
 - 🔄 **Variable substitution** for dynamic URLs and headers across environments (press 'v')
@@ -275,7 +331,7 @@ Navigate to `api/users/get-users.http` and press `r` to execute!
 ## Development
 
 ```bash
-# Run tests (when available)
+# Run tests
 go test ./...
 
 # Build

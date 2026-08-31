@@ -150,7 +150,8 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if matches(msg, m.keys.FuzzyFind) && m.currentView != ViewFuzzyFinder {
+	// The input modal owns printable keys, '/' included (paths, regexes, pipelines)
+	if matches(msg, m.keys.FuzzyFind) && m.currentView != ViewFuzzyFinder && m.currentView != ViewInputModal {
 		m.previousView = m.currentView
 		m.currentView = ViewFuzzyFinder
 		m.searchInput.SetValue("")
@@ -419,6 +420,8 @@ func (m model) updateInputModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.renameFileWithName(value)
 		case "duplicate":
 			return m.duplicateFileWithName(value)
+		case "custom-command":
+			return m.runCustomCommand(value)
 		}
 
 		m.currentView = m.previousView

@@ -1,7 +1,6 @@
 package http
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -17,21 +16,19 @@ type HTTPRequest struct {
 
 // ParseHTTPFile parses a .http file and returns an HTTPRequest
 func ParseHTTPFile(filePath string) (*HTTPRequest, error) {
-	file, err := os.Open(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
 	lineNum := 0
 	var method, url string
 	headers := make(map[string]string)
 	var bodyLines []string
 	inBody := false
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSuffix(line, "\r")
 		lineNum++
 
 		// Skip comment lines (lines starting with #)
@@ -75,10 +72,6 @@ func ParseHTTPFile(filePath string) (*HTTPRequest, error) {
 				headers[headerName] = headerValue
 			}
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading file: %w", err)
 	}
 
 	// Validate required fields

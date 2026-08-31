@@ -18,11 +18,17 @@ func (m model) executeExternalAction(action *config.Action) (model, tea.Cmd) {
 	// Get the file paths based on current view
 	var filePaths []string
 
-	// Check currentView first, then previousView (for modal cases)
-	// This ensures the correct context is used when in history view
-	if m.currentView == ViewHistory || m.previousView == ViewHistory {
+	// Resolve the view the action applies to. previousView is only meaningful
+	// while a modal is open, so it must not be used as a general fallback
+	contextView := m.currentView
+	if contextView == ViewActionModal {
+		contextView = m.previousView
+	}
+
+	switch contextView {
+	case ViewHistory:
 		filePaths = m.getSelectedResponsePathsForAction(action)
-	} else if m.currentView == ViewFileBrowser || m.previousView == ViewFileBrowser {
+	case ViewFileBrowser:
 		filePaths = m.getSelectedFilePaths()
 	}
 
@@ -55,6 +61,60 @@ func (m model) executeExternalCmd(cmdString string) tea.Cmd {
 		}
 		return externalToolCompleteMsg{}
 	})
+}
+
+// promptCustomCommand shows the input modal for a one-off shell command,
+// capturing the files it applies to while the current selection is still known
+func (m model) promptCustomCommand() (model, tea.Cmd) {
+	var filePaths []string
+
+	switch m.currentView {
+	case ViewHistory:
+		// Custom commands operate on the response body, like a single-file action
+		bodyOnly := config.Action{FileTypes: []string{"body"}}
+		filePaths = m.getSelectedResponsePathsForAction(&bodyOnly)
+	case ViewFileBrowser:
+		filePaths = m.getSelectedFilePaths()
+	}
+
+	if len(filePaths) == 0 {
+		m.errorMessage = "No files selected"
+		return m, nil
+	}
+
+	m.customCmdPaths = filePaths
+	m.previousView = m.currentView
+	m.currentView = ViewInputModal
+	m.inputMode = "custom-command"
+	m.inputTitle = "Custom Command"
+	m.inputField.SetValue("")
+	m.inputField.Placeholder = "jq . {filename} | fx"
+	m.inputField.Focus()
+	return m, nil
+}
+
+// runCustomCommand runs a one-off shell command against the files captured when
+// the prompt was opened, using the same placeholder substitution as configured actions
+func (m model) runCustomCommand(cmdString string) (model, tea.Cmd) {
+	m.currentView = m.previousView
+
+	if strings.TrimSpace(cmdString) == "" {
+		return m, nil
+	}
+
+	if len(m.customCmdPaths) == 0 {
+		m.errorMessage = "No files selected"
+		return m, nil
+	}
+
+	action := config.Action{Command: cmdString}
+	builtCmd, err := action.BuildCommand(m.customCmdPaths)
+	if err != nil {
+		m.errorMessage = err.Error()
+		return m, nil
+	}
+
+	return m, m.executeExternalCmd(builtCmd)
 }
 
 // executeEditorCmd is a helper specifically for opening editors

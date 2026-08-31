@@ -2,8 +2,16 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
+
+// SortActionsByName sorts actions alphabetically by name, case-insensitively
+func SortActionsByName(actions []Action) {
+	sort.Slice(actions, func(i, j int) bool {
+		return strings.ToLower(actions[i].Name) < strings.ToLower(actions[j].Name)
+	})
+}
 
 // FilterActions returns actions that are applicable for the given file types and count
 func (c *Config) FilterActions(fileTypes []string, fileCount int) []Action {

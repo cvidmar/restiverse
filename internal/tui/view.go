@@ -144,7 +144,11 @@ func (m model) renderHelpHints() string {
 		hints = []string{"Type to search", "Enter select", "ESC cancel"}
 
 	case ViewInputModal:
-		hints = []string{"Type filename", "Enter confirm", "ESC cancel"}
+		prompt := "Type filename"
+		if m.inputMode == "custom-command" {
+			prompt = "Type command"
+		}
+		hints = []string{prompt, "Enter confirm", "ESC cancel"}
 
 	case ViewConfirmModal:
 		hints = []string{"Y confirm", "N cancel"}
@@ -457,7 +461,11 @@ func (m model) renderInputModal() string {
 	items = append(items, "")
 
 	// Help text
-	items = append(items, m.styles.HelpText.Render("Enter to confirm | ESC to cancel"))
+	help := "Enter to confirm | ESC to cancel"
+	if m.inputMode == "custom-command" {
+		help = "{filename} is replaced with the selected file | " + help
+	}
+	items = append(items, m.styles.HelpText.Render(help))
 
 	content := lipgloss.JoinVertical(lipgloss.Left, items...)
 

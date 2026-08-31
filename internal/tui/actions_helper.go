@@ -32,13 +32,15 @@ func (m model) showActionsForFile(entry files.FileEntry) (model, tea.Cmd) {
 			MaxFiles:   &maxOne,
 			FileTypes:  []string{"http"},
 		}
-		applicable = append([]config.Action{variablesAction}, applicable...)
+		applicable = append(applicable, variablesAction)
 	}
 
 	if len(applicable) == 0 {
 		m.statusMessage = "No actions available"
 		return m, nil
 	}
+
+	config.SortActionsByName(applicable)
 
 	m.previousView = m.currentView
 	m.currentView = ViewActionModal
@@ -82,6 +84,16 @@ func (m model) showActionsForResponse() (model, tea.Cmd) {
 		m.statusMessage = "No actions available"
 		return m, nil
 	}
+
+	config.SortActionsByName(applicable)
+
+	// Add "Custom command" pseudo-action for one-off shell commands
+	applicable = append(applicable, config.Action{
+		Name:      "Custom command…",
+		Command:   "internal:custom-command",
+		MinFiles:  1,
+		FileTypes: []string{"body", "meta"},
+	})
 
 	m.previousView = m.currentView
 	m.currentView = ViewActionModal
@@ -187,6 +199,8 @@ func (m model) executeInternalAction(action *config.Action) (model, tea.Cmd) {
 		return m.showVariablesForCurrentFile()
 	case "copy-as-curl":
 		return m.copyAsCurl()
+	case "custom-command":
+		return m.promptCustomCommand()
 	default:
 		m.errorMessage = "Unknown internal command: " + cmd
 		return m, nil

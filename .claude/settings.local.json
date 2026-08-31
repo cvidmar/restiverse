@@ -8,7 +8,16 @@
       "Bash(echo:*)",
       "Bash(env)",
       "Bash(../restiverse)",
-      "Bash(md5:*)"
+      "Bash(md5:*)",
+      "Bash(go build *)",
+      "Bash(go vet *)",
+      "Bash(GOCACHE=__TRACKED_VAR__/gocache go build ./...)",
+      "Bash(GOCACHE=__TRACKED_VAR__/gocache go vet ./...)",
+      "Bash(GOCACHE=__TRACKED_VAR__/gocache go test ./internal/tui/ -v)",
+      "Bash(GOCACHE=__TRACKED_VAR__/gocache go test ./internal/tui/ -run RepoConfigYAML -v)",
+      "Bash(go test *)",
+      "Bash(gofmt -l ./internal ./cmd)",
+      "Bash(gofmt -d internal/tui/model.go internal/tui/view.go internal/tui/external.go internal/tui/actions_helper.go internal/config/actions.go)"
     ],
     "deny": [
       "Bash(git:*)"
