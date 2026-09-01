@@ -31,6 +31,9 @@ go.work.sum
 # .idea/
 # .vscode/
 
+# Stored responses may contain credentials returned by a server
+responses/
+
 # Test data responses
 test-data/**/responses/
 

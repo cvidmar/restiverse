@@ -18,24 +18,7 @@ func (m model) showVariableSelection(entry files.FileEntry) (model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Extract variables from URL and headers
-	varNames := vars.ExtractVariables(req.URL)
-	for _, headerVal := range req.Headers {
-		headerVars := vars.ExtractVariables(headerVal)
-		for _, v := range headerVars {
-			// Add if not already in list
-			found := false
-			for _, existing := range varNames {
-				if existing == v {
-					found = true
-					break
-				}
-			}
-			if !found {
-				varNames = append(varNames, v)
-			}
-		}
-	}
+	varNames := vars.ExtractRequest(req.URL, req.Headers, req.Body)
 
 	// Check if there are any variables
 	if len(varNames) == 0 {
@@ -45,21 +28,21 @@ func (m model) showVariableSelection(entry files.FileEntry) (model, tea.Cmd) {
 
 	// Check if all variables are defined in config
 	for _, varName := range varNames {
-		if _, ok := m.config.Vars[varName]; !ok {
+		options, ok := m.config.Vars[varName]
+		if !ok {
 			m.errorMessage = "Variable '" + varName + "' not defined in restiverse.yaml"
+			return m, nil
+		}
+		if len(options) == 0 {
+			m.errorMessage = "Variable '" + varName + "' has no values in restiverse.yaml"
 			return m, nil
 		}
 	}
 
-	// Load current variable values from most recent .meta file or use defaults
-	currentValues, _ := vars.LoadVariableValues(entry.Path)
-	defaultValues := vars.GetDefaultValues(m.config.Vars, varNames)
-
-	// Merge loaded values with defaults (loaded values take precedence)
-	for name, value := range defaultValues {
-		if _, ok := currentValues[name]; !ok {
-			currentValues[name] = value
-		}
+	currentValues, err := vars.ResolveValues(entry.Path, m.config.Vars, varNames)
+	if err != nil {
+		m.errorMessage = "Failed to load variable values: " + err.Error()
+		return m, nil
 	}
 
 	// Enter variable selection view
@@ -95,6 +78,11 @@ func (m model) updateVariableSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	currentVar := m.varNames[m.varCurrentIdx]
 	options := m.varDefinitions[currentVar]
+	if len(options) == 0 {
+		m.errorMessage = "Variable '" + currentVar + "' has no values in restiverse.yaml"
+		m.currentView = m.previousView
+		return m, nil
+	}
 
 	// Navigation within options
 	if matches(msg, m.keys.Up) {
@@ -157,7 +145,7 @@ func (m model) saveVariableValuesCmd(httpFilePath string, varValues vars.VarValu
 			return errMsg{err}
 		}
 		// Reload directory to update the URL display
-		entries, err := files.ListDirectory(m.currentPath)
+		entries, err := files.ListDirectory(m.currentPath, m.config.Vars)
 		if err != nil {
 			return errMsg{err}
 		}

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"sort"
+
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cvidmar/restiverse/internal/config"
@@ -11,12 +13,20 @@ import (
 
 // showActionsForFile shows the action modal for a .http file
 func (m model) showActionsForFile(entry files.FileEntry) (model, tea.Cmd) {
-	fileTypes := []string{string(files.GetFileType(entry.Name))}
-	selectedCount := len(m.getSelectedFiles())
+	selected := m.getSelectedFiles()
+	selectedCount := len(selected)
+	var fileTypes []string
 
 	// If no files are multi-selected, treat current file as the selection
 	if selectedCount == 0 {
 		selectedCount = 1
+		fileTypes = []string{string(files.GetFileType(entry.Name))}
+	} else {
+		for _, index := range selected {
+			if index >= 0 && index < len(m.fileEntries) {
+				fileTypes = append(fileTypes, string(files.GetFileType(m.fileEntries[index].Name)))
+			}
+		}
 	}
 
 	applicable := m.config.FilterActions(fileTypes, selectedCount)
@@ -133,7 +143,10 @@ func (m model) executeActionKeybinding(action *config.Action) (model, tea.Cmd) {
 		if len(m.fileEntries) == 0 {
 			return m, nil
 		}
-		entry := m.fileEntries[m.cursor]
+		entry, ok := m.currentEntry()
+		if !ok {
+			return m, nil
+		}
 		fileTypes = []string{string(files.GetFileType(entry.Name))}
 		selectedCount = len(m.getSelectedFiles())
 		if selectedCount == 0 {
@@ -213,7 +226,10 @@ func (m model) showVariablesForCurrentFile() (model, tea.Cmd) {
 		return m, nil
 	}
 
-	entry := m.fileEntries[m.cursor]
+	entry, ok := m.currentEntry()
+	if !ok {
+		return m, nil
+	}
 	if !entry.IsHTTP {
 		return m, nil
 	}
@@ -227,7 +243,10 @@ func (m model) showHistory() (model, tea.Cmd) {
 		return m, nil
 	}
 
-	entry := m.fileEntries[m.cursor]
+	entry, ok := m.currentEntry()
+	if !ok {
+		return m, nil
+	}
 	if !entry.IsHTTP {
 		return m, nil
 	}
@@ -254,6 +273,7 @@ func (m model) getSelectedFiles() []int {
 			selected = append(selected, i)
 		}
 	}
+	sort.Ints(selected)
 	return selected
 }
 
@@ -265,6 +285,7 @@ func (m model) getSelectedResponses() []int {
 			selected = append(selected, i)
 		}
 	}
+	sort.Ints(selected)
 	return selected
 }
 
@@ -273,39 +294,16 @@ func (m model) getSelectedFilePaths() []string {
 	selected := m.getSelectedFiles()
 	if len(selected) == 0 {
 		// No multi-selection, use current cursor
-		if len(m.fileEntries) > 0 {
-			return []string{m.fileEntries[m.cursor].Path}
-		}
-		return []string{}
-	}
-
-	paths := make([]string, len(selected))
-	for i, idx := range selected {
-		paths[i] = m.fileEntries[idx].Path
-	}
-	return paths
-}
-
-// getSelectedResponsePaths returns the file paths of selected responses
-func (m model) getSelectedResponsePaths() []string {
-	selected := m.getSelectedResponses()
-	if len(selected) == 0 {
-		// No multi-selection, use current cursor
-		if len(m.responses) > 0 {
-			resp := m.responses[m.historyCursor]
-			return []string{resp.BodyPath, resp.MetaPath}
+		if entry, ok := m.currentEntry(); ok {
+			return []string{entry.Path}
 		}
 		return []string{}
 	}
 
 	var paths []string
 	for _, idx := range selected {
-		resp := m.responses[idx]
-		if resp.BodyPath != "" {
-			paths = append(paths, resp.BodyPath)
-		}
-		if resp.MetaPath != "" {
-			paths = append(paths, resp.MetaPath)
+		if idx >= 0 && idx < len(m.fileEntries) {
+			paths = append(paths, m.fileEntries[idx].Path)
 		}
 	}
 	return paths
@@ -320,8 +318,7 @@ func (m model) getSelectedResponsePathsForAction(action *config.Action) []string
 
 	if len(selected) == 0 {
 		// No multi-selection, use current cursor
-		if len(m.responses) > 0 {
-			resp := m.responses[m.historyCursor]
+		if resp, ok := m.currentResponse(); ok {
 			var paths []string
 
 			// For single-file actions, return only one file (prefer body over meta)
@@ -350,6 +347,9 @@ func (m model) getSelectedResponsePathsForAction(action *config.Action) []string
 
 	var paths []string
 	for _, idx := range selected {
+		if idx < 0 || idx >= len(m.responses) {
+			continue
+		}
 		resp := m.responses[idx]
 
 		// For single-file actions with multiple selections, only include body (or meta if no body)
@@ -378,7 +378,10 @@ func (m model) copyAsCurl() (model, tea.Cmd) {
 		return m, nil
 	}
 
-	entry := m.fileEntries[m.cursor]
+	entry, ok := m.currentEntry()
+	if !ok {
+		return m, nil
+	}
 	if !entry.IsHTTP {
 		m.errorMessage = "Not an HTTP file"
 		return m, nil
@@ -391,33 +394,14 @@ func (m model) copyAsCurl() (model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Load variable values (from .vars file or most recent .meta file)
-	varValues, err := vars.LoadVariableValues(entry.Path)
+	varNames := vars.ExtractRequest(req.URL, req.Headers, req.Body)
+	varValues, err := vars.ResolveValues(entry.Path, m.config.Vars, varNames)
 	if err != nil {
-		// If we can't load variables, try to get defaults from config
-		varNames := vars.ExtractVariables(req.URL)
-		for _, headerValue := range req.Headers {
-			varNames = append(varNames, vars.ExtractVariables(headerValue)...)
-		}
-		if req.HasBody() {
-			varNames = append(varNames, vars.ExtractVariables(req.Body)...)
-		}
-
-		if len(varNames) > 0 {
-			varValues, _ = vars.LoadDefaultValuesFromConfig(entry.Path, varNames)
-		}
+		m.errorMessage = "Failed to load variables: " + err.Error()
+		return m, nil
 	}
 
-	// Interpolate variables in the request
-	if len(varValues) > 0 {
-		req.URL = vars.SubstituteVariables(req.URL, varValues)
-		for name, value := range req.Headers {
-			req.Headers[name] = vars.SubstituteVariables(value, varValues)
-		}
-		if req.HasBody() {
-			req.Body = vars.SubstituteVariables(req.Body, varValues)
-		}
-	}
+	vars.SubstituteRequest(&req.URL, req.Headers, &req.Body, varValues)
 
 	// Generate curl command
 	curlCmd := req.ToCurlCommand()

@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/cvidmar/restiverse/internal/config"
 )
 
 // Update handles all events and updates the model
@@ -12,6 +13,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.clampCursors()
 		return m, nil
 
 	case directoryLoadedMsg:
@@ -36,12 +38,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Preserve cursor position when reloading (e.g., after editing)
 			m.cursor = oldCursor
 		}
+		m.clampCursors()
 		return m, nil
 
 	case navigatedToDirMsg:
 		m.currentPath = msg.path
 		m.fileEntries = msg.entries
 		m.cursor = 0
+		m.browserOffset = 0
 		m.selectedFiles = make(map[int]bool)
 		m.errorMessage = ""
 
@@ -55,6 +59,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.targetFileName = "" // Clear the target
 		}
+		m.clampCursors()
 		return m, nil
 
 	case historyLoadedMsg:
@@ -66,6 +71,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentHTTPFile = msg.httpFile
 		m.responses = msg.responses
 		m.historyCursor = 0
+		m.historyOffset = 0
 		m.selectedResponses = make(map[int]bool)
 		m.currentView = ViewHistory
 
@@ -73,6 +79,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if isReload && oldResponsesLen > 0 && oldHistoryCursor < len(m.responses) {
 			m.historyCursor = oldHistoryCursor
 		}
+		m.clampCursors()
 		return m, nil
 
 	case errMsg:
@@ -80,15 +87,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case requestCompleteMsg:
+		if m.cancelFunc != nil {
+			m.cancelFunc()
+			m.cancelFunc = nil
+		}
 		m.requestRunning = false
 		m.statusMessage = msg.duration
 		// Reload history view for the current HTTP file
 		return m, m.loadHistoryCmd(m.currentHTTPFile)
 
 	case requestErrorMsg:
+		if m.cancelFunc != nil {
+			m.cancelFunc()
+			m.cancelFunc = nil
+		}
 		m.requestRunning = false
 		m.errorMessage = msg.err.Error()
 		return m, nil
+
+	case requestCancelledMsg:
+		if m.cancelFunc != nil {
+			m.cancelFunc()
+			m.cancelFunc = nil
+		}
+		m.requestRunning = false
+		m.statusMessage = "Request cancelled"
+		return m, m.clearStatusAfter(3)
+
+	case configEditedMsg:
+		cfg, err := config.LoadConfig(m.baseDir)
+		if err != nil {
+			m.errorMessage = "Config not reloaded: " + err.Error()
+			return m, m.loadDirectoryCmd()
+		}
+		m.config = cfg
+		m.statusMessage = "Configuration reloaded"
+		return m, tea.Batch(m.loadDirectoryCmd(), m.clearStatusAfter(3))
 
 	case externalToolCompleteMsg:
 		m.statusMessage = ""
@@ -102,8 +136,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errorMessage = msg.err.Error()
 		return m, nil
 
-	case searchResultsMsg:
-		return m.handleSearchResults(msg)
+	case searchCandidatesLoadedMsg:
+		return m.handleSearchCandidatesLoaded(msg)
 
 	case clearStatusMsg:
 		m.statusMessage = ""
@@ -136,16 +170,18 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errorMessage = ""
 
 		// Cancel request if running
-		if m.requestRunning && m.cancelFunc != nil {
-			m.cancelFunc()
-			m.requestRunning = false
-			m.statusMessage = "Request cancelled"
+		if m.requestRunning {
+			if m.cancelFunc != nil {
+				m.cancelFunc()
+			}
+			m.statusMessage = "Cancelling request..."
 			return m, nil
 		}
 
 		// Close modals
 		if m.currentView == ViewActionModal || m.currentView == ViewFuzzyFinder || m.currentView == ViewInputModal || m.currentView == ViewConfirmModal || m.currentView == ViewVariableSelect {
 			m.currentView = m.previousView
+			m.clampCursors()
 			return m, nil
 		}
 	}
@@ -155,7 +191,12 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.previousView = m.currentView
 		m.currentView = ViewFuzzyFinder
 		m.searchInput.SetValue("")
-		return m, m.searchHTTPFilesCmd("")
+		m.searchResults = nil
+		m.searchCandidates = nil
+		m.searchCursor = 0
+		m.searchOffset = 0
+		m.searchSession++
+		return m, m.loadSearchCandidatesCmd(m.searchSession)
 	}
 
 	// View-specific handling
@@ -212,6 +253,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor > 0 {
 			m.cursor--
 		}
+		m.browserOffset = scrollTo(m.browserOffset, m.cursor, len(m.fileEntries), m.browserRows())
 		return m, nil
 	}
 
@@ -219,6 +261,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor < len(m.fileEntries)-1 {
 			m.cursor++
 		}
+		m.browserOffset = scrollTo(m.browserOffset, m.cursor, len(m.fileEntries), m.browserRows())
 		return m, nil
 	}
 
@@ -236,7 +279,10 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		entry := m.fileEntries[m.cursor]
+		entry, ok := m.currentEntry()
+		if !ok {
+			return m, nil
+		}
 		if entry.IsDir {
 			// Navigate into directory
 			return m, m.navigateToDir(entry.Path)
@@ -250,8 +296,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Back: navigate to parent directory
 	if matches(msg, m.keys.Back) {
 		parentDir := filepath.Dir(m.currentPath)
-		// Don't navigate above base directory
-		if len(parentDir) >= len(m.baseDir) && parentDir != m.currentPath {
+		if m.currentPath != m.baseDir && parentDir != m.currentPath {
 			return m, m.navigateToDir(parentDir)
 		}
 		return m, nil
@@ -270,8 +315,7 @@ func (m model) updateFileBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		return m.openConfigFile()
 	case "v": // Variables configuration
-		if len(m.fileEntries) > 0 {
-			entry := m.fileEntries[m.cursor]
+		if entry, ok := m.currentEntry(); ok {
 			if entry.IsHTTP && len(m.config.Vars) > 0 && checkFileHasVariables(entry.Path) {
 				return m.showVariableSelection(entry)
 			}
@@ -296,6 +340,7 @@ func (m model) updateHistory(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.historyCursor > 0 {
 			m.historyCursor--
 		}
+		m.historyOffset = scrollTo(m.historyOffset, m.historyCursor, len(m.responses), m.historyRows())
 		return m, nil
 	}
 
@@ -303,6 +348,7 @@ func (m model) updateHistory(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.historyCursor < len(m.responses)-1 {
 			m.historyCursor++
 		}
+		m.historyOffset = scrollTo(m.historyOffset, m.historyCursor, len(m.responses), m.historyRows())
 		return m, nil
 	}
 
@@ -356,7 +402,7 @@ func (m model) updateActionModal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if matches(msg, m.keys.Enter) {
-		if len(m.actions) > 0 {
+		if m.modalCursor >= 0 && m.modalCursor < len(m.actions) {
 			action := m.actions[m.modalCursor]
 			return m.executeAction(&action)
 		}
@@ -373,23 +419,25 @@ func (m model) updateFuzzyFinder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Handle navigation in results (arrow keys only, letters go to the search input)
 	if msg.Type == tea.KeyUp {
-		if m.cursor > 0 {
-			m.cursor--
+		if m.searchCursor > 0 {
+			m.searchCursor--
 		}
+		m.searchOffset = scrollTo(m.searchOffset, m.searchCursor, len(m.searchResults), m.searchRows())
 		return m, nil
 	}
 
 	if msg.Type == tea.KeyDown {
-		if m.cursor < len(m.searchResults)-1 {
-			m.cursor++
+		if m.searchCursor < len(m.searchResults)-1 {
+			m.searchCursor++
 		}
+		m.searchOffset = scrollTo(m.searchOffset, m.searchCursor, len(m.searchResults), m.searchRows())
 		return m, nil
 	}
 
 	if matches(msg, m.keys.Enter) {
 		// Navigate to selected file
-		if len(m.searchResults) > 0 && m.cursor < len(m.searchResults) {
-			selectedFile := m.searchResults[m.cursor]
+		if m.searchCursor >= 0 && m.searchCursor < len(m.searchResults) {
+			selectedFile := m.searchResults[m.searchCursor]
 			m.currentView = ViewFileBrowser // Always go to file browser when selecting a file
 			m.currentPath = filepath.Dir(selectedFile.Path)
 			m.targetFileName = filepath.Base(selectedFile.Path) // Remember which file to highlight
@@ -402,9 +450,8 @@ func (m model) updateFuzzyFinder(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.searchInput, cmd = m.searchInput.Update(msg)
 
-	// Trigger search
-	query := m.searchInput.Value()
-	return m, tea.Batch(cmd, m.searchHTTPFilesCmd(query))
+	m.filterSearchCandidates(m.searchInput.Value())
+	return m, cmd
 }
 
 // updateInputModal handles key presses in the input modal

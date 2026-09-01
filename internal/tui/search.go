@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,78 +10,72 @@ import (
 	"github.com/cvidmar/restiverse/internal/files"
 )
 
-type searchResultsMsg struct {
-	results []files.FileEntry
+type searchCandidate struct {
+	entry      files.FileEntry
+	searchText string
 }
 
-// searchHTTPFilesCmd returns a command that searches for HTTP files
-func (m model) searchHTTPFilesCmd(query string) tea.Cmd {
-	return func() tea.Msg {
-		if query == "" {
-			return searchResultsMsg{[]files.FileEntry{}}
-		}
+type searchCandidatesLoadedMsg struct {
+	session    int
+	candidates []searchCandidate
+}
 
-		// Find all HTTP files in the base directory
+// loadSearchCandidatesCmd walks and reads the request tree once per finder session.
+func (m model) loadSearchCandidatesCmd(session int) tea.Cmd {
+	return func() tea.Msg {
 		httpFiles, err := files.FindAllHTTPFiles(m.baseDir)
 		if err != nil {
 			return errMsg{err}
 		}
 
-		// Filter by query
-		var results []files.FileEntry
-		query = strings.ToLower(query)
-
+		candidates := make([]searchCandidate, 0, len(httpFiles))
 		for _, httpFile := range httpFiles {
-			// Check filename
-			if strings.Contains(strings.ToLower(filepath.Base(httpFile)), query) {
-				info, err := os.Stat(httpFile)
-				if err != nil {
-					continue
-				}
-
-				relPath, _ := filepath.Rel(m.baseDir, httpFile)
-				results = append(results, files.FileEntry{
-					Name:    relPath,
-					Path:    httpFile,
-					IsDir:   false,
-					IsHTTP:  true,
-					ModTime: info.ModTime(),
-					Size:    info.Size(),
-				})
-				continue
-			}
-
-			// Check file content
-			content, err := os.ReadFile(httpFile)
+			info, err := os.Stat(httpFile)
 			if err != nil {
 				continue
 			}
-
-			if strings.Contains(strings.ToLower(string(content)), query) {
-				info, err := os.Stat(httpFile)
-				if err != nil {
-					continue
-				}
-
-				relPath, _ := filepath.Rel(m.baseDir, httpFile)
-				results = append(results, files.FileEntry{
-					Name:    relPath,
-					Path:    httpFile,
-					IsDir:   false,
-					IsHTTP:  true,
-					ModTime: info.ModTime(),
-					Size:    info.Size(),
-				})
+			file, err := os.Open(httpFile)
+			if err != nil {
+				continue
 			}
+			content, _ := io.ReadAll(io.LimitReader(file, 64*1024))
+			file.Close()
+			relPath, _ := filepath.Rel(m.baseDir, httpFile)
+			entry := files.FileEntry{
+				Name:    relPath,
+				Path:    httpFile,
+				IsHTTP:  true,
+				ModTime: info.ModTime(),
+				Size:    info.Size(),
+			}
+			candidates = append(candidates, searchCandidate{
+				entry:      entry,
+				searchText: strings.ToLower(relPath + "\n" + string(content)),
+			})
 		}
-
-		return searchResultsMsg{results}
+		return searchCandidatesLoadedMsg{session: session, candidates: candidates}
 	}
 }
 
-// Update the model to handle search results
-func (m model) handleSearchResults(msg searchResultsMsg) (model, tea.Cmd) {
-	m.searchResults = msg.results
-	m.cursor = 0
+func (m model) handleSearchCandidatesLoaded(msg searchCandidatesLoadedMsg) (model, tea.Cmd) {
+	if msg.session != m.searchSession || m.currentView != ViewFuzzyFinder {
+		return m, nil
+	}
+	m.searchCandidates = msg.candidates
+	m.filterSearchCandidates(m.searchInput.Value())
 	return m, nil
+}
+
+func (m *model) filterSearchCandidates(query string) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	m.searchResults = nil
+	if query != "" {
+		for _, candidate := range m.searchCandidates {
+			if strings.Contains(candidate.searchText, query) {
+				m.searchResults = append(m.searchResults, candidate.entry)
+			}
+		}
+	}
+	m.searchCursor = 0
+	m.searchOffset = 0
 }

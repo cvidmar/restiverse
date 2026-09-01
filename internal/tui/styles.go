@@ -4,30 +4,29 @@ import "github.com/charmbracelet/lipgloss"
 
 // Styles holds all the lipgloss styles for the TUI
 type Styles struct {
-	TopBar       lipgloss.Style
-	StatusBar    lipgloss.Style
-	Content      lipgloss.Style
+	TopBar    lipgloss.Style
+	StatusBar lipgloss.Style
+	Content   lipgloss.Style
 
 	Directory    lipgloss.Style
 	File         lipgloss.Style
 	SelectedItem lipgloss.Style
 	MarkedItem   lipgloss.Style
 
-	Modal        lipgloss.Style
-	ModalTitle   lipgloss.Style
-	ModalItem    lipgloss.Style
+	Modal         lipgloss.Style
+	ModalTitle    lipgloss.Style
+	ModalItem     lipgloss.Style
 	ModalSelected lipgloss.Style
 
-	Table        lipgloss.Style
-	TableHeader  lipgloss.Style
-	TableRow     lipgloss.Style
+	TableHeader      lipgloss.Style
+	TableRow         lipgloss.Style
 	TableRowSelected lipgloss.Style
 
-	ErrorMsg     lipgloss.Style
-	SuccessMsg   lipgloss.Style
-	InfoMsg      lipgloss.Style
+	ErrorMsg   lipgloss.Style
+	SuccessMsg lipgloss.Style
+	InfoMsg    lipgloss.Style
 
-	HelpText     lipgloss.Style
+	HelpText lipgloss.Style
 }
 
 // DefaultStyles returns the default styling for the TUI
@@ -86,10 +85,6 @@ func DefaultStyles() Styles {
 			Background(lipgloss.Color("214")). // Orange
 			Padding(0, 2).
 			Bold(true),
-
-		Table: lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(lipgloss.Color("240")),
 
 		TableHeader: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("62")).

@@ -7,11 +7,11 @@ A terminal-based REST API client written in Go that bridges the gap between powe
 ## Features
 
 - **Terminal-native**: Built for developers who live in the terminal
-- **File-based workflow**: All requests and responses are files that can be versioned, shared, and scripted
-- **Variable substitution**: Dynamic URLs and headers for different environments (dev/staging/prod)
+- **File-based workflow**: Requests are easy to version and response artifacts are easy to script
+- **Variable substitution**: Dynamic URLs, headers, and bodies for different environments (dev/staging/prod)
 - **Midnight Commander-style navigation**: Familiar and efficient directory browsing
 - **Configurable actions**: Execute custom commands on response files
-- **Large output friendly**: Designed to handle massive JSON responses
+- **Large output friendly**: Response bodies stream directly to files instead of being buffered in memory
 - **Zero lock-in**: Uses simple `.http` files and YAML configuration
 
 ## Installation
@@ -78,11 +78,15 @@ Accept: application/json
 
 ### Variable Substitution
 
-Use variables in your requests for dynamic URLs and headers across different environments:
+Use variables in request URLs, headers, and bodies across different environments:
 
 ```http
 GET https://srv-{node}.{environ}.example.com/api
 Authorization: Bearer {token}
+
+{
+  "target": "{node}"
+}
 ```
 
 Define available values in `restiverse.yaml` (example):
@@ -106,7 +110,7 @@ vars:
 - Navigate through variables and select values with arrow keys
 - Values are saved in `.vars` files and remembered for future requests
 - The file browser shows current values: `https://srv-{node:a}.{environ:stage}.example.com/api`
-- Variables are automatically substituted when executing requests
+- Variables are automatically substituted in URLs, header values, and request bodies
 
 ### Navigation
 
@@ -118,13 +122,13 @@ vars:
 - **R**: Rename selected file
 - **D**: Duplicate selected `.http` file (asks for a filename, defaults to `NAME-copy.http`)
 - **X**: Delete selected file (asks for confirmation)
-- **c**: Open the nearest `restiverse.yaml` in your `$EDITOR`
+- **c**: Open the base directory's `restiverse.yaml` in your configured editor
 - **v**: Configure variables (when `.http` file with variables is selected)
 - **r**: Execute HTTP request (when `.http` file is selected)
 - **h**: View response history
 - **e**: Edit file in your `$EDITOR`
 - **/**: Open fuzzy finder (use arrow keys to navigate results)
-- **ESC**: Close modals/cancel operations
+- **ESC**: Close modals or cancel the active HTTP request
 - **q**: Quit (asks for confirmation)
 - **Ctrl+C**: Quit immediately
 
@@ -146,16 +150,18 @@ Nothing is saved: the next custom command starts from an empty box. Once a one-o
 
 ### Response Storage
 
-When you execute a request, Restiverse creates a `responses/` folder next to your `.http` file and stores:
+When you execute a request, Restiverse creates a `responses/` folder next to your `.http` file and streams the response into:
 
-- `FILENAME_YYYYMMDD_HHMMSS.meta` - Request/response metadata (YAML)
-- `FILENAME_YYYYMMDD_HHMMSS.body` - Response body
+- `FILENAME_YYYYMMDD_HHMMSS_mmm.meta` - Request/response metadata (YAML)
+- `FILENAME_YYYYMMDD_HHMMSS_mmm.body` - Response body
+
+The millisecond suffix keeps successive single-process executions distinct. Failed requests retain metadata without a body; user-cancelled requests leave no response artifact.
 
 **Automatic Cleanup:** By default, Restiverse keeps only the 5 most recent response files per `.http` file. When you execute a request and save a new response, older responses beyond the limit are automatically deleted. You can configure this with the `max_responses` setting (set to `0` for unlimited).
 
 ### Configuration
 
-Restiverse uses `restiverse.yaml` for configuration. A default config is created automatically when you first run the app in a directory. Beyond the actions shown below, the generated default also includes `Copy as curl`, `Rename File`, `Duplicate File`, `Delete File`, `View Meta` and `Delete Response`.
+Restiverse uses the `restiverse.yaml` in the directory where it was started. A default config is created there automatically on first run; configuration files in child directories are not merged. Beyond the actions shown below, the generated default also includes `Copy as curl`, `Rename File`, `Duplicate File`, `Delete File`, `View Meta` and `Delete Response`.
 
 Example configuration:
 
@@ -169,7 +175,7 @@ editor: $EDITOR
 # Response history management
 max_responses: 5  # Keep only the 5 most recent responses per .http file (0 = unlimited)
 
-# Variable definitions for URL/header substitution
+# Variable definitions for URL/header/body substitution
 vars:
   environ:
     - stage
@@ -178,6 +184,12 @@ vars:
     - a
     - b
     - c
+
+# Optional additions to the built-in metadata redaction lists
+sensitive_headers:
+  - x-workspace-token
+sensitive_query_params:
+  - nonce
 
 # Actions
 actions:
@@ -244,7 +256,7 @@ Placeholders:
 - `{filename}` - the selected file (or all selected files, space-separated)
 - `{filename1}`, `{filename2}`, … - the selected files individually
 
-All paths are shell-quoted before substitution. Commands run via `sh -c`, so pipes and redirection work.
+All paths are shell-quoted before substitution. Commands run via `sh -c`, so pipes and redirection work. During config loading, only the exact `$EDITOR` and `${EDITOR}` tokens are expanded by Restiverse. Other shell variables such as `$1` and `$PATTERN` are preserved for the shell that runs the action.
 
 ### Internal Commands
 
@@ -291,6 +303,14 @@ Keybindings are optional; actions without one are still available from the actio
 
 6. View response with `less` or process with custom tools
 
+## Security
+
+New `.meta`, `.body`, and `.vars` artifacts are created with owner-only (`0600`) permissions. Metadata masks a built-in, case-insensitive set of sensitive request and response headers, including Authorization, Proxy-Authorization, Cookie, Set-Cookie, X-Api-Key, X-Auth-Token, and Api-Key. It also redacts common sensitive query parameters such as `access_token`, `token`, `api_key`, `key`, and `signature`; the configuration options above can extend both lists. Resolved variable values are not written to new metadata.
+
+Redaction cannot inspect arbitrary response bodies, which may still contain credentials. Keep `responses/` and `*.vars` out of version control; this repository's `.gitignore` includes both patterns. Review artifacts before sharing them.
+
+Restiverse enforces one in-flight request per TUI. Running multiple Restiverse processes against the same request directory at the same time is unsupported.
+
 ## Try it Out
 
 Test files are included in the `test-data/` directory:
@@ -315,12 +335,11 @@ Navigate to `api/users/get-users.http` and press `r` to execute!
 - 🔍 **Fuzzy finder** with arrow key navigation (press `/`)
 - ✅ **Multi-selection** support (Space key)
 - ⏱️ **Request execution** with timeout and cancellation (ESC)
-- 🌳 **Configuration hierarchy** with child folder override support
 - 🛠️ **External tool integration** with proper terminal handoff
 - ⌨️ **Action keybindings** (r, e, h, R, D, X, plus v and c)
 - ✏️ **File creation** - press 'n' to create new `.http` files
-- 🔐 **Credential masking** in `.meta` files (Authorization headers)
-- 🔄 **Variable substitution** for dynamic URLs and headers across environments (press 'v')
+- 🔐 **Credential masking** for sensitive metadata headers and query parameters
+- 🔄 **Variable substitution** for dynamic URLs, headers, and bodies across environments (press 'v')
 
 ⏳ **Not Yet Implemented (Future Enhancements):**
 - OAuth flows and dynamic token generation

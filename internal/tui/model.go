@@ -33,17 +33,19 @@ type model struct {
 	previousView ViewType // For returning from modal
 
 	// File browser state
-	currentPath      string
-	fileEntries      []files.FileEntry
-	cursor           int
-	selectedFiles    map[int]bool // Multi-selection
-	targetFileName   string       // Target file to highlight after directory load (from fuzzy finder)
+	currentPath    string
+	fileEntries    []files.FileEntry
+	cursor         int
+	selectedFiles  map[int]bool // Multi-selection
+	targetFileName string       // Target file to highlight after directory load (from fuzzy finder)
+	browserOffset  int
 
 	// History view state
 	currentHTTPFile   string
 	responses         []files.ResponseEntry
 	historyCursor     int
 	selectedResponses map[int]bool
+	historyOffset     int
 
 	// Action modal state
 	actions     []config.Action
@@ -51,8 +53,12 @@ type model struct {
 	modalTitle  string
 
 	// Fuzzy finder state
-	searchInput   textinput.Model
-	searchResults []files.FileEntry
+	searchInput      textinput.Model
+	searchResults    []files.FileEntry
+	searchCandidates []searchCandidate
+	searchCursor     int
+	searchOffset     int
+	searchSession    int
 
 	// Input modal state
 	inputField         textinput.Model
@@ -68,12 +74,12 @@ type model struct {
 	confirmAction  func(model) (model, tea.Cmd) // Callback for confirmed action
 
 	// Variable selection state
-	varSelectHTTPFile string            // HTTP file being configured
-	varNames          []string          // Variable names to configure
-	varValues         map[string]string // Current values
+	varSelectHTTPFile string              // HTTP file being configured
+	varNames          []string            // Variable names to configure
+	varValues         map[string]string   // Current values
 	varDefinitions    map[string][]string // Available values from config
-	varCurrentIdx     int               // Index of variable being configured
-	varOptionCursor   int               // Cursor position in options list
+	varCurrentIdx     int                 // Index of variable being configured
+	varOptionCursor   int                 // Cursor position in options list
 
 	// HTTP execution state
 	requestRunning bool
@@ -126,7 +132,7 @@ func (m model) Init() tea.Cmd {
 // loadDirectoryCmd returns a command that loads the current directory
 func (m model) loadDirectoryCmd() tea.Cmd {
 	return func() tea.Msg {
-		entries, err := files.ListDirectory(m.currentPath)
+		entries, err := files.ListDirectory(m.currentPath, m.config.Vars)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -137,7 +143,7 @@ func (m model) loadDirectoryCmd() tea.Cmd {
 // navigateToDir returns a command that navigates to a new directory
 func (m model) navigateToDir(newPath string) tea.Cmd {
 	return func() tea.Msg {
-		entries, err := files.ListDirectory(newPath)
+		entries, err := files.ListDirectory(newPath, m.config.Vars)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -168,13 +174,16 @@ type historyLoadedMsg struct {
 type requestStartedMsg struct{}
 
 type requestCompleteMsg struct {
-	statusCode int
-	duration   string
+	duration string
 }
 
 type requestErrorMsg struct {
 	err error
 }
+
+type requestCancelledMsg struct{}
+
+type configEditedMsg struct{}
 
 type externalToolCompleteMsg struct{}
 

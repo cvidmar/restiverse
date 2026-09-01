@@ -21,45 +21,33 @@ func ParseHTTPFile(filePath string) (*HTTPRequest, error) {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 
-	lineNum := 0
 	var method, url string
 	headers := make(map[string]string)
 	var bodyLines []string
 	inBody := false
 
-	for _, line := range strings.Split(string(content), "\n") {
+	for _, line := range strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n") {
 		line = strings.TrimSuffix(line, "\r")
-		lineNum++
-
-		// Skip comment lines (lines starting with #)
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
-			continue
-		}
 
-		// First line: METHOD URL
-		if lineNum == 1 || (method == "" && url == "") {
-			parts := strings.Fields(line)
-			if len(parts) < 2 {
-				// Skip if not a valid method line yet
-				continue
-			}
-			method = strings.ToUpper(parts[0])
-			url = parts[1]
-			continue
-		}
-
-		// Empty line signals start of body
-		if trimmed == "" {
-			if !inBody {
-				inBody = true
-				continue
-			}
-		}
-
-		// If we're in the body, collect all remaining lines
 		if inBody {
 			bodyLines = append(bodyLines, line)
+			continue
+		}
+
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			if method != "" && trimmed == "" {
+				inBody = true
+			}
+			continue
+		}
+
+		if method == "" {
+			var ok bool
+			method, url, ok = ParseRequestLine(line)
+			if !ok {
+				continue
+			}
 			continue
 		}
 
@@ -90,14 +78,23 @@ func ParseHTTPFile(filePath string) (*HTTPRequest, error) {
 	}
 
 	// Join body lines
-	body := strings.Join(bodyLines, "\n")
+	body := strings.TrimSuffix(strings.Join(bodyLines, "\n"), "\n")
 
 	return &HTTPRequest{
 		Method:  method,
 		URL:     url,
 		Headers: headers,
-		Body:    strings.TrimSpace(body),
+		Body:    body,
 	}, nil
+}
+
+// ParseRequestLine parses METHOD URL from a request line.
+func ParseRequestLine(line string) (method, url string, ok bool) {
+	parts := strings.Fields(strings.TrimSpace(line))
+	if len(parts) < 2 {
+		return "", "", false
+	}
+	return strings.ToUpper(parts[0]), parts[1], true
 }
 
 // GetContentType returns the Content-Type header value, or empty string if not set

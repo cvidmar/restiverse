@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cvidmar/restiverse/internal/config"
 	"github.com/cvidmar/restiverse/internal/files"
+	"github.com/cvidmar/restiverse/internal/shellquote"
 )
 
 // executeExternalAction executes an external tool/command
@@ -118,18 +119,34 @@ func (m model) runCustomCommand(cmdString string) (model, tea.Cmd) {
 }
 
 // executeEditorCmd is a helper specifically for opening editors
-func (m model) executeEditorCmd(filePath string) tea.Cmd {
-	editor := m.config.Editor
-	if editor == "" {
-		editor = "vi" // Fallback
-	}
-
-	return tea.ExecProcess(exec.Command(editor, filePath), func(err error) tea.Msg {
+func (m model) executeEditorCmd(filePath string, success tea.Msg) tea.Cmd {
+	return tea.ExecProcess(editorCommand(m.config.Editor, filePath), func(err error) tea.Msg {
 		if err != nil {
 			return externalToolErrorMsg{fmt.Errorf("editor failed: %w", err)}
 		}
+		if success != nil {
+			return success
+		}
 		return externalToolCompleteMsg{}
 	})
+}
+
+func editorCommand(editor, filePath string) *exec.Cmd {
+	if editor == "" {
+		editor = "vi"
+	}
+	return exec.Command("sh", "-c", editor+" "+shellquote.Quote(filePath))
+}
+
+func resolveNewName(dir, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." {
+		return "", fmt.Errorf("invalid filename")
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return "", fmt.Errorf("filename cannot contain path separators")
+	}
+	return filepath.Join(dir, name), nil
 }
 
 // promptForNewHTTPFile shows the input modal for creating a new .http file
@@ -146,9 +163,9 @@ func (m model) promptForNewHTTPFile() (model, tea.Cmd) {
 
 // createHTTPFileWithName creates a new .http file with the given filename
 func (m model) createHTTPFileWithName(filename string) (model, tea.Cmd) {
-	// Ensure .http extension
-	if len(filename) == 0 {
-		m.errorMessage = "Filename cannot be empty"
+	filename = strings.TrimSpace(filename)
+	if _, err := resolveNewName(m.currentPath, filename); err != nil {
+		m.errorMessage = err.Error()
 		return m, nil
 	}
 
@@ -157,7 +174,7 @@ func (m model) createHTTPFileWithName(filename string) (model, tea.Cmd) {
 		filename = filename + ".http"
 	}
 
-	filePath := m.currentPath + "/" + filename
+	filePath := filepath.Join(m.currentPath, filename)
 
 	// Check if file already exists
 	if _, err := os.Stat(filePath); err == nil {
@@ -179,17 +196,17 @@ Accept: application/json
 	m.currentView = ViewFileBrowser
 	return m, tea.Batch(
 		m.loadDirectoryCmd(),
-		m.executeEditorCmd(filePath),
+		m.executeEditorCmd(filePath, externalToolCompleteMsg{}),
 	)
 }
 
 // promptForRenameFile shows the input modal for renaming a file
 func (m model) promptForRenameFile() (model, tea.Cmd) {
-	if len(m.fileEntries) == 0 {
+	entry, ok := m.currentEntry()
+	if !ok {
 		return m, nil
 	}
 
-	entry := m.fileEntries[m.cursor]
 	if entry.IsDir {
 		m.errorMessage = "Cannot rename directories"
 		return m, nil
@@ -208,19 +225,19 @@ func (m model) promptForRenameFile() (model, tea.Cmd) {
 
 // renameFileWithName renames the file at the target index
 func (m model) renameFileWithName(newName string) (model, tea.Cmd) {
-	if len(newName) == 0 {
-		m.errorMessage = "Filename cannot be empty"
-		return m, nil
-	}
-
-	if m.renameTargetIdx >= len(m.fileEntries) {
+	if m.renameTargetIdx < 0 || m.renameTargetIdx >= len(m.fileEntries) {
 		m.errorMessage = "Invalid file selection"
 		return m, nil
 	}
 
 	entry := m.fileEntries[m.renameTargetIdx]
 	oldPath := entry.Path
-	newPath := m.currentPath + "/" + newName
+	newPath, err := resolveNewName(m.currentPath, newName)
+	if err != nil {
+		m.errorMessage = err.Error()
+		return m, nil
+	}
+	newName = filepath.Base(newPath)
 
 	// Check if target already exists
 	if _, err := os.Stat(newPath); err == nil && oldPath != newPath {
@@ -229,7 +246,7 @@ func (m model) renameFileWithName(newName string) (model, tea.Cmd) {
 	}
 
 	// Rename the file
-	if err := os.Rename(oldPath, newPath); err != nil {
+	if err := files.RenameRequestArtifacts(oldPath, newPath); err != nil {
 		m.errorMessage = fmt.Sprintf("Failed to rename: %v", err)
 		return m, nil
 	}
@@ -242,11 +259,11 @@ func (m model) renameFileWithName(newName string) (model, tea.Cmd) {
 // promptDuplicateFile shows the input modal for duplicating a file,
 // prefilled with the original name plus a "-copy" suffix
 func (m model) promptDuplicateFile() (model, tea.Cmd) {
-	if len(m.fileEntries) == 0 {
+	entry, ok := m.currentEntry()
+	if !ok {
 		return m, nil
 	}
 
-	entry := m.fileEntries[m.cursor]
 	if entry.IsDir {
 		m.errorMessage = "Cannot duplicate directories"
 		return m, nil
@@ -268,18 +285,18 @@ func (m model) promptDuplicateFile() (model, tea.Cmd) {
 
 // duplicateFileWithName copies the file at the target index to the given filename
 func (m model) duplicateFileWithName(newName string) (model, tea.Cmd) {
-	if len(newName) == 0 {
-		m.errorMessage = "Filename cannot be empty"
-		return m, nil
-	}
-
-	if m.duplicateTargetIdx >= len(m.fileEntries) {
+	if m.duplicateTargetIdx < 0 || m.duplicateTargetIdx >= len(m.fileEntries) {
 		m.errorMessage = "Invalid file selection"
 		return m, nil
 	}
 
 	entry := m.fileEntries[m.duplicateTargetIdx]
-	newPath := m.currentPath + "/" + newName
+	newPath, err := resolveNewName(m.currentPath, newName)
+	if err != nil {
+		m.errorMessage = err.Error()
+		return m, nil
+	}
+	newName = filepath.Base(newPath)
 
 	// Check if target already exists
 	if _, err := os.Stat(newPath); err == nil {
@@ -297,6 +314,14 @@ func (m model) duplicateFileWithName(newName string) (model, tea.Cmd) {
 		m.errorMessage = fmt.Sprintf("Failed to duplicate: %v", err)
 		return m, nil
 	}
+	if err := files.CopyVariableSidecar(entry.Path, newPath); err != nil {
+		if removeErr := os.Remove(newPath); removeErr != nil {
+			m.errorMessage = fmt.Sprintf("Failed to copy saved variables: %v (also failed to remove duplicate: %v)", err, removeErr)
+		} else {
+			m.errorMessage = fmt.Sprintf("Failed to copy saved variables: %v", err)
+		}
+		return m, nil
+	}
 
 	m.currentView = ViewFileBrowser
 	m.statusMessage = fmt.Sprintf("Duplicated '%s' to '%s'", entry.Name, newName)
@@ -305,11 +330,11 @@ func (m model) duplicateFileWithName(newName string) (model, tea.Cmd) {
 
 // promptDeleteFile shows confirmation modal for deleting a file
 func (m model) promptDeleteFile() (model, tea.Cmd) {
-	if len(m.fileEntries) == 0 {
+	entry, ok := m.currentEntry()
+	if !ok {
 		return m, nil
 	}
 
-	entry := m.fileEntries[m.cursor]
 	if entry.IsDir {
 		m.errorMessage = "Cannot delete directories (use rm -r manually)"
 		return m, nil
@@ -318,7 +343,13 @@ func (m model) promptDeleteFile() (model, tea.Cmd) {
 	m.previousView = m.currentView
 	m.currentView = ViewConfirmModal
 	m.confirmTitle = "Delete File"
-	m.confirmMessage = fmt.Sprintf("Delete '%s'?\nThis cannot be undone.", entry.Name)
+	sidecars, err := files.RequestSidecars(entry.Path)
+	if err != nil {
+		m.errorMessage = fmt.Sprintf("Failed to inspect related files: %v", err)
+		m.currentView = m.previousView
+		return m, nil
+	}
+	m.confirmMessage = fmt.Sprintf("Delete '%s' and %d related file(s)?\nThis cannot be undone.", entry.Name, len(sidecars))
 	m.confirmAction = func(model model) (model, tea.Cmd) {
 		return model.deleteFile()
 	}
@@ -327,12 +358,12 @@ func (m model) promptDeleteFile() (model, tea.Cmd) {
 
 // deleteFile deletes the currently selected file
 func (m model) deleteFile() (model, tea.Cmd) {
-	if len(m.fileEntries) == 0 {
+	entry, ok := m.currentEntry()
+	if !ok {
 		return m, nil
 	}
 
-	entry := m.fileEntries[m.cursor]
-	if err := os.Remove(entry.Path); err != nil {
+	if err := files.DeleteRequestArtifacts(entry.Path); err != nil {
 		m.errorMessage = fmt.Sprintf("Failed to delete: %v", err)
 		return m, nil
 	}
@@ -355,16 +386,13 @@ func (m model) clearStatusAfter(seconds int) tea.Cmd {
 	})
 }
 
-// openConfigFile finds and opens the config file in the editor
+// openConfigFile opens the base config file in the editor
 func (m model) openConfigFile() (model, tea.Cmd) {
-	// Find the config file starting from current directory
-	configPath := config.FindConfigFile(m.currentPath, m.baseDir)
-
-	if configPath == "" {
-		m.errorMessage = "No restiverse.yaml found in current or parent directories"
+	configPath := filepath.Join(m.baseDir, "restiverse.yaml")
+	if _, err := os.Stat(configPath); err != nil {
+		m.errorMessage = fmt.Sprintf("Cannot open config: %v", err)
 		return m, nil
 	}
 
-	// Open the config file in the editor
-	return m, m.executeEditorCmd(configPath)
+	return m, m.executeEditorCmd(configPath, configEditedMsg{})
 }

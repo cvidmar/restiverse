@@ -4,14 +4,14 @@ import "github.com/charmbracelet/bubbletea"
 
 // KeyMap holds all the key mappings for the application
 type KeyMap struct {
-	Up            []string
-	Down          []string
-	Enter         []string
-	Back          []string
-	Space         []string
-	FuzzyFind     []string
-	Quit          []string
-	Cancel        []string
+	Up        []string
+	Down      []string
+	Enter     []string
+	Back      []string
+	Space     []string
+	FuzzyFind []string
+	Quit      []string
+	Cancel    []string
 }
 
 // DefaultKeyMap returns the default key mappings
@@ -23,7 +23,7 @@ func DefaultKeyMap() KeyMap {
 		Back:      []string{"backspace"},
 		Space:     []string{" ", "insert"},
 		FuzzyFind: []string{"/"},
-		Quit:      []string{"ctrl+c", "q"},
+		Quit:      []string{"q"},
 		Cancel:    []string{"esc"},
 	}
 }

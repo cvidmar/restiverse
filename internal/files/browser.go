@@ -1,6 +1,7 @@
 package files
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,19 +9,22 @@ import (
 	"strings"
 	"time"
 
+	httpPkg "github.com/cvidmar/restiverse/internal/http"
+	"github.com/cvidmar/restiverse/internal/respfile"
 	"github.com/cvidmar/restiverse/internal/vars"
+	"gopkg.in/yaml.v3"
 )
 
 // FileEntry represents a file or directory in the browser
 type FileEntry struct {
-	Name      string
-	Path      string
-	IsDir     bool
-	IsHTTP    bool
-	ModTime   time.Time
-	Size      int64
-	URL       string // URL extracted from .http file (for HTTP files only)
-	Method    string // HTTP method extracted from .http file (for HTTP files only)
+	Name    string
+	Path    string
+	IsDir   bool
+	IsHTTP  bool
+	ModTime time.Time
+	Size    int64
+	URL     string // URL extracted from .http file (for HTTP files only)
+	Method  string // HTTP method extracted from .http file (for HTTP files only)
 }
 
 // FileType represents the type of a file for action filtering
@@ -39,7 +43,7 @@ func IsHTTPFileName(name string) bool {
 
 // ListDirectory returns all files and directories in the given path
 // Folders are listed first, then .http files
-func ListDirectory(dirPath string) ([]FileEntry, error) {
+func ListDirectory(dirPath string, configuredVars map[string][]string) ([]FileEntry, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read directory: %w", err)
@@ -70,7 +74,7 @@ func ListDirectory(dirPath string) ([]FileEntry, error) {
 
 		// Extract URL and method for .http files
 		if fileEntry.IsHTTP {
-			method, url := extractHTTPInfoWithVars(fullPath)
+			method, url := extractHTTPInfoWithVars(fullPath, configuredVars)
 			fileEntry.Method = method
 			fileEntry.URL = url
 		}
@@ -101,32 +105,22 @@ func extractHTTPInfo(filePath string) (method, url string) {
 	}
 	defer file.Close()
 
-	// Read only the first line
-	data := make([]byte, 512) // Read first 512 bytes
-	n, err := file.Read(data)
-	if err != nil && n == 0 {
-		return "", ""
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		method, url, _ = httpPkg.ParseRequestLine(line)
+		return method, url
 	}
-
-	// Find the first line
-	firstLine := string(data[:n])
-	if idx := strings.Index(firstLine, "\n"); idx != -1 {
-		firstLine = firstLine[:idx]
-	}
-
-	// Parse METHOD URL
-	parts := strings.Fields(strings.TrimSpace(firstLine))
-	if len(parts) >= 2 {
-		method = strings.ToUpper(parts[0])
-		url = parts[1]
-	}
-
-	return method, url
+	return "", ""
 }
 
 // extractHTTPInfoWithVars extracts the method and URL from a .http file
 // and formats the URL with current variable values (e.g., {node:a})
-func extractHTTPInfoWithVars(filePath string) (method, url string) {
+func extractHTTPInfoWithVars(filePath string, definitions map[string][]string) (method, url string) {
 	method, url = extractHTTPInfo(filePath)
 	if url == "" {
 		return method, url
@@ -140,9 +134,13 @@ func extractHTTPInfoWithVars(filePath string) (method, url string) {
 
 	// Load variable values (from .vars file or most recent .meta)
 	varValues, err := vars.LoadVariableValues(filePath)
-	if err != nil || len(varValues) == 0 {
-		// Try to load defaults from config
-		varValues, _ = vars.LoadDefaultValuesFromConfig(filePath, varNames)
+	if err != nil {
+		varValues = vars.VarValues{}
+	}
+	for name, value := range vars.GetDefaultValues(definitions, varNames) {
+		if _, exists := varValues[name]; !exists {
+			varValues[name] = value
+		}
 	}
 
 	if len(varValues) == 0 {
@@ -156,13 +154,12 @@ func extractHTTPInfoWithVars(filePath string) (method, url string) {
 
 // GetFileType returns the file type for action filtering
 func GetFileType(filename string) FileType {
-	if strings.HasSuffix(filename, ".http") {
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".http":
 		return FileTypeHTTP
-	}
-	if strings.HasSuffix(filename, ".body") {
+	case ".body":
 		return FileTypeBody
-	}
-	if strings.HasSuffix(filename, ".meta") {
+	case ".meta":
 		return FileTypeMeta
 	}
 	return ""
@@ -170,15 +167,15 @@ func GetFileType(filename string) FileType {
 
 // ResponseEntry represents a response in the history
 type ResponseEntry struct {
-	HTTPFile    string    // The .http file this response belongs to
-	Timestamp   time.Time
-	MetaPath    string
-	BodyPath    string
-	StatusCode  int
-	Duration    time.Duration
-	Size        int64
-	HasError    bool
-	ErrorMsg    string
+	HTTPFile   string // The .http file this response belongs to
+	Timestamp  time.Time
+	MetaPath   string
+	BodyPath   string
+	StatusCode int
+	Duration   time.Duration
+	Size       int64
+	HasError   bool
+	ErrorMsg   string
 }
 
 // ListResponseHistory returns all responses for a given .http file
@@ -186,7 +183,7 @@ type ResponseEntry struct {
 func ListResponseHistory(httpFilePath string) ([]ResponseEntry, error) {
 	// Get the directory and filename
 	dir := filepath.Dir(httpFilePath)
-	baseName := strings.TrimSuffix(filepath.Base(httpFilePath), ".http")
+	baseName := respfile.BaseName(httpFilePath)
 
 	// Check for responses directory
 	responsesDir := filepath.Join(dir, "responses")
@@ -209,28 +206,20 @@ func ListResponseHistory(httpFilePath string) ([]ResponseEntry, error) {
 
 		name := entry.Name()
 
-		// Check if this file belongs to our .http file
-		if !strings.HasPrefix(name, baseName+"_") {
+		recordID, timestamp, ok := respfile.Match(name, baseName)
+		if !ok {
 			continue
 		}
-
-		// Extract timestamp from filename: filename_YYYYMMDD_HHMMSS.{meta|body}
-		parts := strings.Split(name, ".")
-		if len(parts) < 2 {
-			continue
-		}
-
-		// Get the timestamp part (e.g., "filename_20241128_143045")
-		timestampPart := parts[len(parts)-2]
 
 		var respEntry *ResponseEntry
-		if existing, ok := responseMap[timestampPart]; ok {
+		if existing, ok := responseMap[recordID]; ok {
 			respEntry = existing
 		} else {
 			respEntry = &ResponseEntry{
-				HTTPFile: httpFilePath,
+				HTTPFile:  httpFilePath,
+				Timestamp: timestamp,
 			}
-			responseMap[timestampPart] = respEntry
+			responseMap[recordID] = respEntry
 		}
 
 		fullPath := filepath.Join(responsesDir, name)
@@ -252,9 +241,12 @@ func ListResponseHistory(httpFilePath string) ([]ResponseEntry, error) {
 		// Parse metadata if available
 		if resp.MetaPath != "" {
 			if err := parseResponseMeta(resp); err != nil {
-				// If we can't parse meta, skip this response
-				continue
+				resp.HasError = true
+				resp.ErrorMsg = "invalid metadata: " + err.Error()
 			}
+		} else {
+			resp.HasError = true
+			resp.ErrorMsg = "metadata file is missing"
 		}
 		responses = append(responses, *resp)
 	}
@@ -274,45 +266,18 @@ func parseResponseMeta(resp *ResponseEntry) error {
 		return fmt.Errorf("failed to read meta file: %w", err)
 	}
 
-	// Simple YAML parsing for the fields we need
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "timestamp:") {
-			timestampStr := strings.TrimSpace(strings.TrimPrefix(line, "timestamp:"))
-			timestampStr = strings.Trim(timestampStr, "\"")
-			t, err := time.Parse(time.RFC3339, timestampStr)
-			if err == nil {
-				resp.Timestamp = t
-			}
-		} else if strings.HasPrefix(line, "status_code:") {
-			fmt.Sscanf(line, "status_code: %d", &resp.StatusCode)
-		} else if strings.HasPrefix(line, "duration_ms:") {
-			var ms int64
-			fmt.Sscanf(line, "duration_ms: %d", &ms)
-			resp.Duration = time.Duration(ms) * time.Millisecond
-		} else if strings.HasPrefix(line, "error:") {
-			resp.HasError = true
-			resp.ErrorMsg = strings.TrimSpace(strings.TrimPrefix(line, "error:"))
-			resp.ErrorMsg = strings.Trim(resp.ErrorMsg, "\"")
-		}
+	var meta httpPkg.ResponseMetadata
+	if err := yaml.Unmarshal(data, &meta); err != nil {
+		return fmt.Errorf("failed to parse meta file: %w", err)
 	}
-
-	return nil
-}
-
-// GetResponsesDir returns the responses directory for a given .http file
-func GetResponsesDir(httpFilePath string) string {
-	dir := filepath.Dir(httpFilePath)
-	return filepath.Join(dir, "responses")
-}
-
-// EnsureResponsesDir creates the responses directory if it doesn't exist
-func EnsureResponsesDir(httpFilePath string) error {
-	responsesDir := GetResponsesDir(httpFilePath)
-	if err := os.MkdirAll(responsesDir, 0755); err != nil {
-		return fmt.Errorf("failed to create responses directory: %w", err)
+	if timestamp, err := time.Parse(time.RFC3339Nano, meta.Timestamp); err == nil {
+		resp.Timestamp = timestamp
 	}
+	resp.StatusCode = meta.StatusCode
+	resp.Duration = time.Duration(meta.DurationMS) * time.Millisecond
+	resp.HasError = meta.Error != ""
+	resp.ErrorMsg = meta.Error
+
 	return nil
 }
 

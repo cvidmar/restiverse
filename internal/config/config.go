@@ -4,29 +4,34 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
+	varsPkg "github.com/cvidmar/restiverse/internal/vars"
 	"gopkg.in/yaml.v3"
 )
 
 // Config represents the complete configuration for Restiverse
 type Config struct {
-	Timeout      time.Duration           `yaml:"timeout"`
-	Editor       string                  `yaml:"editor"`
-	MaxResponses int                     `yaml:"max_responses,omitempty"` // Max response files to keep per .http file (0 = unlimited)
-	Actions      []Action                `yaml:"actions"`
-	Vars         map[string][]string     `yaml:"vars,omitempty"` // Custom variables for URL substitution
+	Timeout              time.Duration       `yaml:"timeout"`
+	Editor               string              `yaml:"editor"`
+	MaxResponses         int                 `yaml:"max_responses,omitempty"` // Max response files to keep per .http file (0 = unlimited)
+	Actions              []Action            `yaml:"actions"`
+	Vars                 map[string][]string `yaml:"vars,omitempty"` // Custom variables for URL substitution
+	SensitiveHeaders     []string            `yaml:"sensitive_headers,omitempty"`
+	SensitiveQueryParams []string            `yaml:"sensitive_query_params,omitempty"`
 }
 
 // Action represents a configurable action that can be performed on files
 type Action struct {
-	Name        string   `yaml:"name"`
-	Command     string   `yaml:"command"`
-	Keybinding  string   `yaml:"keybinding,omitempty"`
-	MinFiles    int      `yaml:"min_files"`
-	MaxFiles    *int     `yaml:"max_files"` // nil means unlimited
-	FileTypes   []string `yaml:"file_types"`
+	Name       string   `yaml:"name"`
+	Command    string   `yaml:"command"`
+	Keybinding string   `yaml:"keybinding,omitempty"`
+	MinFiles   int      `yaml:"min_files"`
+	MaxFiles   *int     `yaml:"max_files"` // nil means unlimited
+	FileTypes  []string `yaml:"file_types"`
 }
 
 // LoadConfig loads configuration from a restiverse.yaml file
@@ -41,6 +46,7 @@ func LoadConfig(dir string) (*Config, error) {
 		if err := SaveConfig(configPath, config); err != nil {
 			return nil, fmt.Errorf("failed to create default config: %w", err)
 		}
+		config.ExpandEnvVars()
 		return config, nil
 	}
 
@@ -66,108 +72,6 @@ func LoadConfig(dir string) (*Config, error) {
 	return &config, nil
 }
 
-// LoadConfigHierarchy loads configuration with parent folder override logic
-// Child folder configs override parent folder configs
-func LoadConfigHierarchy(dir, baseDir string) (*Config, error) {
-	// Start with base directory config
-	config, err := LoadConfig(baseDir)
-	if err != nil {
-		return nil, err
-	}
-
-	// If dir is same as baseDir, return base config
-	if dir == baseDir {
-		return config, nil
-	}
-
-	// Walk up from dir to baseDir and merge configs
-	relPath, err := filepath.Rel(baseDir, dir)
-	if err != nil {
-		return config, nil // If can't determine relative path, use base config
-	}
-
-	// Split path into components
-	parts := strings.Split(relPath, string(filepath.Separator))
-	currentPath := baseDir
-
-	// For each subdirectory, check for restiverse.yaml and merge
-	for _, part := range parts {
-		if part == "." || part == "" {
-			continue
-		}
-		currentPath = filepath.Join(currentPath, part)
-
-		childConfigPath := filepath.Join(currentPath, "restiverse.yaml")
-		if _, err := os.Stat(childConfigPath); err == nil {
-			// Child config exists, merge it
-			childConfig, err := LoadConfig(currentPath)
-			if err != nil {
-				// Skip invalid child configs
-				continue
-			}
-			config = MergeConfigs(config, childConfig)
-		}
-	}
-
-	return config, nil
-}
-
-// MergeConfigs merges child config into parent config (child overrides parent)
-func MergeConfigs(parent, child *Config) *Config {
-	merged := &Config{
-		Timeout:      child.Timeout,
-		Editor:       child.Editor,
-		MaxResponses: child.MaxResponses,
-		Actions:      make([]Action, 0),
-		Vars:         make(map[string][]string),
-	}
-
-	// If child doesn't set timeout, use parent's
-	if child.Timeout == 0 {
-		merged.Timeout = parent.Timeout
-	}
-
-	// If child doesn't set editor, use parent's
-	if child.Editor == "" {
-		merged.Editor = parent.Editor
-	}
-
-	// If child doesn't set max_responses, use parent's
-	if child.MaxResponses == 0 {
-		merged.MaxResponses = parent.MaxResponses
-	}
-
-	// Merge actions: child actions override parent actions with same name
-	actionMap := make(map[string]Action)
-
-	// Add parent actions
-	for _, action := range parent.Actions {
-		actionMap[action.Name] = action
-	}
-
-	// Override with child actions
-	for _, action := range child.Actions {
-		actionMap[action.Name] = action
-	}
-
-	// Convert back to slice
-	for _, action := range actionMap {
-		merged.Actions = append(merged.Actions, action)
-	}
-
-	// Merge vars: start with parent vars
-	for name, values := range parent.Vars {
-		merged.Vars[name] = values
-	}
-
-	// Override with child vars
-	for name, values := range child.Vars {
-		merged.Vars[name] = values
-	}
-
-	return merged
-}
-
 // DefaultConfig returns a sensible default configuration
 func DefaultConfig() *Config {
 	maxOne := 1
@@ -176,7 +80,7 @@ func DefaultConfig() *Config {
 		Timeout:      30 * time.Second,
 		Editor:       "$EDITOR",
 		MaxResponses: 5, // Keep last 5 responses by default
-		Actions:      []Action{
+		Actions: []Action{
 			{
 				Name:       "Execute Request",
 				Command:    "internal:execute",
@@ -202,11 +106,11 @@ func DefaultConfig() *Config {
 				FileTypes:  []string{"http"},
 			},
 			{
-				Name:       "Copy as curl",
-				Command:    "internal:copy-as-curl",
-				MinFiles:   1,
-				MaxFiles:   &maxOne,
-				FileTypes:  []string{"http"},
+				Name:      "Copy as curl",
+				Command:   "internal:copy-as-curl",
+				MinFiles:  1,
+				MaxFiles:  &maxOne,
+				FileTypes: []string{"http"},
 			},
 			{
 				Name:       "Rename File",
@@ -281,6 +185,20 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("max_responses cannot be negative (use 0 for unlimited)")
 	}
 
+	varNames := make([]string, 0, len(c.Vars))
+	for name := range c.Vars {
+		varNames = append(varNames, name)
+	}
+	sort.Strings(varNames)
+	for _, name := range varNames {
+		if !varsPkg.ValidName(name) {
+			return fmt.Errorf("invalid variable name %q: must match [a-zA-Z_][a-zA-Z0-9_]*", name)
+		}
+		if len(c.Vars[name]) == 0 {
+			return fmt.Errorf("variable %q has no values", name)
+		}
+	}
+
 	// Check for keybinding conflicts
 	keybindings := make(map[string]string)
 	for _, action := range c.Actions {
@@ -334,7 +252,9 @@ func (a *Action) Validate() error {
 	return nil
 }
 
-// ExpandEnvVars expands environment variables in the configuration
+var editorTokenPattern = regexp.MustCompile(`\$(?:\{EDITOR\}|EDITOR\b)`)
+
+// ExpandEnvVars expands the editor setting while preserving shell variables in actions.
 func (c *Config) ExpandEnvVars() {
 	c.Editor = os.ExpandEnv(c.Editor)
 
@@ -343,20 +263,10 @@ func (c *Config) ExpandEnvVars() {
 		c.Editor = "vi"
 	}
 
-	// Set EDITOR environment variable for action command expansion
-	// This ensures $EDITOR in action commands gets expanded to the actual editor
-	oldEditor := os.Getenv("EDITOR")
-	os.Setenv("EDITOR", c.Editor)
-
 	for i := range c.Actions {
-		c.Actions[i].Command = os.ExpandEnv(c.Actions[i].Command)
-	}
-
-	// Restore original EDITOR env var (or unset if it wasn't set)
-	if oldEditor != "" {
-		os.Setenv("EDITOR", oldEditor)
-	} else {
-		os.Unsetenv("EDITOR")
+		c.Actions[i].Command = editorTokenPattern.ReplaceAllStringFunc(c.Actions[i].Command, func(string) string {
+			return c.Editor
+		})
 	}
 }
 
@@ -370,49 +280,36 @@ func (a *Action) GetInternalCommand() string {
 	return strings.TrimPrefix(a.Command, "internal:")
 }
 
-// FindConfigFile searches for restiverse.yaml starting from currentDir
-// and traveling up the directory tree until it reaches baseDir.
-// Returns the path to the config file, or empty string if not found.
-func FindConfigFile(currentDir, baseDir string) string {
-	// Ensure both paths are absolute
-	currentDir, err := filepath.Abs(currentDir)
-	if err != nil {
-		return ""
+var defaultSensitiveHeaders = []string{
+	"authorization", "proxy-authorization", "cookie", "set-cookie",
+	"x-api-key", "x-auth-token", "api-key",
+}
+
+var defaultSensitiveQueryParams = []string{
+	"access_token", "token", "api_key", "key", "signature",
+}
+
+// EffectiveSensitiveHeaders returns the non-removable defaults plus configured names.
+func (c *Config) EffectiveSensitiveHeaders() []string {
+	return mergeNames(defaultSensitiveHeaders, c.SensitiveHeaders)
+}
+
+// EffectiveSensitiveQueryParams returns the non-removable defaults plus configured names.
+func (c *Config) EffectiveSensitiveQueryParams() []string {
+	return mergeNames(defaultSensitiveQueryParams, c.SensitiveQueryParams)
+}
+
+func mergeNames(defaults, configured []string) []string {
+	seen := make(map[string]bool, len(defaults)+len(configured))
+	merged := make([]string, 0, len(defaults)+len(configured))
+	for _, names := range [][]string{defaults, configured} {
+		for _, name := range names {
+			name = strings.ToLower(strings.TrimSpace(name))
+			if name != "" && !seen[name] {
+				seen[name] = true
+				merged = append(merged, name)
+			}
+		}
 	}
-	baseDir, err = filepath.Abs(baseDir)
-	if err != nil {
-		return ""
-	}
-
-	// Start from currentDir and walk up to baseDir
-	checkDir := currentDir
-	for {
-		// Check if restiverse.yaml exists in this directory
-		configPath := filepath.Join(checkDir, "restiverse.yaml")
-		if _, err := os.Stat(configPath); err == nil {
-			return configPath
-		}
-
-		// If we've reached the base directory and haven't found a config, stop
-		if checkDir == baseDir {
-			break
-		}
-
-		// Move up one directory
-		parentDir := filepath.Dir(checkDir)
-
-		// Prevent infinite loop (we've reached the root)
-		if parentDir == checkDir {
-			break
-		}
-
-		// Don't go above the base directory
-		if len(parentDir) < len(baseDir) {
-			break
-		}
-
-		checkDir = parentDir
-	}
-
-	return ""
+	return merged
 }

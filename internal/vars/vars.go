@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
+	"sort"
+	"time"
 
+	"github.com/cvidmar/restiverse/internal/respfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -18,7 +20,15 @@ type VarValuesStore struct {
 	Vars VarValues `yaml:"vars,omitempty"`
 }
 
-var varPattern = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\}`)
+var (
+	varPattern  = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\}`)
+	namePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+)
+
+// ValidName reports whether name can be used in a variable placeholder.
+func ValidName(name string) bool {
+	return namePattern.MatchString(name)
+}
 
 // ExtractVariables finds all variable placeholders in a string
 func ExtractVariables(text string) []string {
@@ -50,6 +60,43 @@ func SubstituteVariables(text string, values VarValues) string {
 	})
 }
 
+// ExtractRequest returns distinct request variables in a stable order.
+func ExtractRequest(url string, headers map[string]string, body string) []string {
+	seen := make(map[string]bool)
+	var names []string
+	add := func(text string) {
+		for _, name := range ExtractVariables(text) {
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+
+	add(url)
+	headerNames := make([]string, 0, len(headers))
+	for name := range headers {
+		headerNames = append(headerNames, name)
+	}
+	sort.Strings(headerNames)
+	for _, name := range headerNames {
+		add(headers[name])
+	}
+	add(body)
+	return names
+}
+
+// SubstituteRequest replaces variables throughout a parsed request.
+func SubstituteRequest(url *string, headers map[string]string, body *string, values VarValues) {
+	*url = SubstituteVariables(*url, values)
+	for name, value := range headers {
+		headers[name] = SubstituteVariables(value, values)
+	}
+	if body != nil {
+		*body = SubstituteVariables(*body, values)
+	}
+}
+
 // GetDefaultValues returns the first value for each variable from config
 func GetDefaultValues(varDefs map[string][]string, varNames []string) VarValues {
 	values := make(VarValues)
@@ -77,7 +124,7 @@ func LoadVariableValues(httpFilePath string) (VarValues, error) {
 
 	// Fallback: load from most recent .meta file
 	dir := filepath.Dir(httpFilePath)
-	baseName := strings.TrimSuffix(filepath.Base(httpFilePath), ".http")
+	baseName := respfile.BaseName(httpFilePath)
 
 	// Check for responses directory
 	responsesDir := filepath.Join(dir, "responses")
@@ -90,9 +137,11 @@ func LoadVariableValues(httpFilePath string) (VarValues, error) {
 		return VarValues{}, fmt.Errorf("failed to read responses directory: %w", err)
 	}
 
-	// Find the most recent .meta file
-	var latestMeta string
-	var latestTime int64 = 0
+	type metaFile struct {
+		path      string
+		timestamp time.Time
+	}
+	var metaFiles []metaFile
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -100,43 +149,43 @@ func LoadVariableValues(httpFilePath string) (VarValues, error) {
 		}
 
 		name := entry.Name()
-		if !strings.HasPrefix(name, baseName+"_") || !strings.HasSuffix(name, ".meta") {
+		if filepath.Ext(name) != ".meta" {
 			continue
 		}
+		_, timestamp, ok := respfile.Match(name, baseName)
+		if !ok {
+			continue
+		}
+		metaFiles = append(metaFiles, metaFile{
+			path:      filepath.Join(responsesDir, name),
+			timestamp: timestamp,
+		})
+	}
 
-		info, err := entry.Info()
+	if len(metaFiles) == 0 {
+		return VarValues{}, nil
+	}
+	sort.Slice(metaFiles, func(i, j int) bool {
+		return metaFiles[i].timestamp.After(metaFiles[j].timestamp)
+	})
+
+	// New metadata omits Vars. Walk backwards until a legacy record with saved
+	// values is found so a mixed old/new history remains compatible.
+	for _, meta := range metaFiles {
+		data, err := os.ReadFile(meta.path)
 		if err != nil {
+			return VarValues{}, fmt.Errorf("failed to read meta file: %w", err)
+		}
+		var store VarValuesStore
+		if err := yaml.Unmarshal(data, &store); err != nil {
 			continue
 		}
-
-		if info.ModTime().Unix() > latestTime {
-			latestTime = info.ModTime().Unix()
-			latestMeta = filepath.Join(responsesDir, name)
+		if len(store.Vars) > 0 {
+			return store.Vars, nil
 		}
 	}
 
-	// No meta file found
-	if latestMeta == "" {
-		return VarValues{}, nil
-	}
-
-	// Read and parse the meta file
-	data, err := os.ReadFile(latestMeta)
-	if err != nil {
-		return VarValues{}, fmt.Errorf("failed to read meta file: %w", err)
-	}
-
-	// Try to parse vars from meta file
-	var store VarValuesStore
-	if err := yaml.Unmarshal(data, &store); err != nil {
-		return VarValues{}, nil // If parsing fails, return empty values
-	}
-
-	if store.Vars == nil {
-		return VarValues{}, nil
-	}
-
-	return store.Vars, nil
+	return VarValues{}, nil
 }
 
 // SaveVariableValues saves variable values for an HTTP file
@@ -155,65 +204,35 @@ func SaveVariableValues(httpFilePath string, values VarValues) error {
 		return fmt.Errorf("failed to marshal variable values: %w", err)
 	}
 
-	if err := os.WriteFile(varFilePath, data, 0644); err != nil {
+	if err := writePrivateFile(varFilePath, data); err != nil {
 		return fmt.Errorf("failed to write variable values: %w", err)
 	}
 
 	return nil
 }
 
+// ResolveValues loads saved values and fills missing entries from definitions.
+func ResolveValues(httpFilePath string, definitions map[string][]string, names []string) (VarValues, error) {
+	values, err := LoadVariableValues(httpFilePath)
+	if err != nil {
+		return nil, err
+	}
+	if values == nil {
+		values = make(VarValues)
+	}
+	for name, value := range GetDefaultValues(definitions, names) {
+		if _, exists := values[name]; !exists {
+			values[name] = value
+		}
+	}
+	return values, nil
+}
+
 // getVarFilePath returns the path to the variable values file for an HTTP file
 func getVarFilePath(httpFilePath string) string {
 	dir := filepath.Dir(httpFilePath)
-	baseName := strings.TrimSuffix(filepath.Base(httpFilePath), ".http")
+	baseName := respfile.BaseName(httpFilePath)
 	return filepath.Join(dir, baseName+".vars")
-}
-
-// LoadDefaultValuesFromConfig loads default values from the config file
-func LoadDefaultValuesFromConfig(httpFilePath string, varNames []string) (VarValues, error) {
-	// Find the restiverse.yaml config file
-	dir := filepath.Dir(httpFilePath)
-	configPath := findConfigFile(dir)
-	if configPath == "" {
-		return VarValues{}, nil
-	}
-
-	// Read the config file
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return VarValues{}, nil
-	}
-
-	// Parse the config to extract vars
-	var config struct {
-		Vars map[string][]string `yaml:"vars"`
-	}
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return VarValues{}, nil
-	}
-
-	// Get default values
-	return GetDefaultValues(config.Vars, varNames), nil
-}
-
-// findConfigFile searches for restiverse.yaml starting from the given directory
-func findConfigFile(startDir string) string {
-	currentDir := startDir
-	for {
-		configPath := filepath.Join(currentDir, "restiverse.yaml")
-		if _, err := os.Stat(configPath); err == nil {
-			return configPath
-		}
-
-		// Move up one directory
-		parentDir := filepath.Dir(currentDir)
-		if parentDir == currentDir {
-			// Reached the root
-			break
-		}
-		currentDir = parentDir
-	}
-	return ""
 }
 
 // FormatURLWithVarValues formats a URL showing current variable values
@@ -226,4 +245,17 @@ func FormatURLWithVarValues(url string, values VarValues) string {
 		}
 		return match
 	})
+}
+
+func writePrivateFile(path string, data []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := file.Chmod(0o600); err != nil {
+		return err
+	}
+	_, err = file.Write(data)
+	return err
 }

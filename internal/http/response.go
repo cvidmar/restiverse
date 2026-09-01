@@ -2,12 +2,14 @@ package http
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/cvidmar/restiverse/internal/respfile"
 	"gopkg.in/yaml.v3"
 )
 
@@ -34,139 +36,99 @@ type ResponseHeaders struct {
 	Headers map[string]string `yaml:"headers"`
 }
 
-// SaveResponse saves an HTTP response to .meta and .body files
-func SaveResponse(httpFilePath string, req *HTTPRequest, resp *Response, varValues map[string]string, err error) error {
-	// Get responses directory
-	responsesDir := filepath.Join(filepath.Dir(httpFilePath), "responses")
-	if err := os.MkdirAll(responsesDir, 0755); err != nil {
+// MetadataOptions controls redaction in stored metadata.
+type MetadataOptions struct {
+	SensitiveHeaders     []string
+	SensitiveQueryParams []string
+}
+
+// SaveResponseMetadata writes metadata for an already allocated response record.
+func SaveResponseMetadata(record respfile.Record, req *HTTPRequest, resp *Response, requestErr error, options MetadataOptions) error {
+	if err := os.MkdirAll(filepath.Dir(record.MetaPath), 0o755); err != nil {
 		return fmt.Errorf("failed to create responses directory: %w", err)
 	}
 
-	// Generate timestamp-based filename
-	timestamp := time.Now()
-	baseName := strings.TrimSuffix(filepath.Base(httpFilePath), ".http")
-	timestampStr := timestamp.Format("20060102_150405")
-	baseFilename := fmt.Sprintf("%s_%s", baseName, timestampStr)
-
-	metaPath := filepath.Join(responsesDir, baseFilename+".meta")
-	bodyPath := filepath.Join(responsesDir, baseFilename+".body")
-
-	// Build metadata
 	meta := ResponseMetadata{
-		Timestamp: timestamp.Format(time.RFC3339),
-		Vars:      varValues,
+		Timestamp: record.Timestamp.Format(time.RFC3339Nano),
+		Request: RequestMetadata{
+			Method:  req.Method,
+			URL:     redactURL(req.URL, options.SensitiveQueryParams),
+			Headers: redactHeaders(req.Headers, options.SensitiveHeaders),
+		},
 	}
 
-	// Add request metadata
-	meta.Request = RequestMetadata{
-		Method:  req.Method,
-		URL:     req.URL,
-		Headers: make(map[string]string),
-	}
-
-	// Mask auth headers
-	for name, value := range req.Headers {
-		if strings.ToLower(name) == "authorization" {
-			meta.Request.Headers[name] = MaskAuthHeader(value)
-		} else {
-			meta.Request.Headers[name] = value
+	if requestErr != nil {
+		meta.Error = requestErr.Error()
+		if err := os.Remove(record.BodyPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove stale response body: %w", err)
 		}
-	}
-
-	if err != nil {
-		// Request failed
-		meta.StatusCode = 0
-		meta.DurationMS = 0
-		meta.Error = err.Error()
 	} else {
-		// Request succeeded
 		meta.StatusCode = resp.StatusCode
 		meta.DurationMS = resp.Duration.Milliseconds()
-		meta.Response = ResponseHeaders{
-			Headers: resp.Headers,
-		}
-
-		// Save response body
-		if resp.Body != nil && len(resp.Body) > 0 {
-			if err := os.WriteFile(bodyPath, resp.Body, 0644); err != nil {
-				return fmt.Errorf("failed to write response body: %w", err)
-			}
-		}
+		meta.Response = ResponseHeaders{Headers: redactHeaders(resp.Headers, options.SensitiveHeaders)}
 	}
 
-	// Save metadata
-	metaData, err := yaml.Marshal(meta)
+	data, err := yaml.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
-
-	if err := os.WriteFile(metaPath, metaData, 0644); err != nil {
+	if err := writePrivateFile(record.MetaPath, data); err != nil {
 		return fmt.Errorf("failed to write metadata file: %w", err)
 	}
-
 	return nil
 }
 
-// SaveResponseWithStream saves an HTTP response when the body was streamed to a file
-func SaveResponseWithStream(httpFilePath string, req *HTTPRequest, resp *Response, bodyPath string, varValues map[string]string, err error) error {
-	// Get responses directory
-	responsesDir := filepath.Join(filepath.Dir(httpFilePath), "responses")
-
-	// Generate timestamp-based filename
-	timestamp := time.Now()
-	baseName := strings.TrimSuffix(filepath.Base(httpFilePath), ".http")
-	timestampStr := timestamp.Format("20060102_150405")
-	baseFilename := fmt.Sprintf("%s_%s", baseName, timestampStr)
-
-	metaPath := filepath.Join(responsesDir, baseFilename+".meta")
-
-	// Build metadata
-	meta := ResponseMetadata{
-		Timestamp: timestamp.Format(time.RFC3339),
-		Vars:      varValues,
+func redactHeaders(headers map[string]string, sensitive []string) map[string]string {
+	sensitiveSet := make(map[string]bool, len(sensitive))
+	for _, name := range sensitive {
+		sensitiveSet[strings.ToLower(name)] = true
 	}
-
-	// Add request metadata
-	meta.Request = RequestMetadata{
-		Method:  req.Method,
-		URL:     req.URL,
-		Headers: make(map[string]string),
-	}
-
-	// Mask auth headers
-	for name, value := range req.Headers {
-		if strings.ToLower(name) == "authorization" {
-			meta.Request.Headers[name] = MaskAuthHeader(value)
+	redacted := make(map[string]string, len(headers))
+	for name, value := range headers {
+		lowerName := strings.ToLower(name)
+		if sensitiveSet[lowerName] {
+			if lowerName == "authorization" || lowerName == "proxy-authorization" {
+				redacted[name] = MaskAuthHeader(value)
+			} else {
+				redacted[name] = "***"
+			}
 		} else {
-			meta.Request.Headers[name] = value
+			redacted[name] = value
 		}
 	}
+	return redacted
+}
 
+func redactURL(rawURL string, sensitive []string) string {
+	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		// Request failed
-		meta.StatusCode = 0
-		meta.DurationMS = 0
-		meta.Error = err.Error()
-	} else {
-		// Request succeeded
-		meta.StatusCode = resp.StatusCode
-		meta.DurationMS = resp.Duration.Milliseconds()
-		meta.Response = ResponseHeaders{
-			Headers: resp.Headers,
+		return rawURL
+	}
+	sensitiveSet := make(map[string]bool, len(sensitive))
+	for _, name := range sensitive {
+		sensitiveSet[strings.ToLower(name)] = true
+	}
+	query := parsed.Query()
+	for name := range query {
+		if sensitiveSet[strings.ToLower(name)] {
+			query[name] = []string{"***"}
 		}
 	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
 
-	// Save metadata
-	metaData, err := yaml.Marshal(meta)
+func writePrivateFile(path string, data []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+		return err
 	}
-
-	if err := os.WriteFile(metaPath, metaData, 0644); err != nil {
-		return fmt.Errorf("failed to write metadata file: %w", err)
+	defer file.Close()
+	if err := file.Chmod(0o600); err != nil {
+		return err
 	}
-
-	return nil
+	_, err = file.Write(data)
+	return err
 }
 
 // CleanupOldResponses removes old response files, keeping only the most recent maxResponses files
@@ -183,8 +145,7 @@ func CleanupOldResponses(httpFilePath string, maxResponses int) error {
 	}
 
 	// Get base name for this HTTP file
-	baseName := strings.TrimSuffix(filepath.Base(httpFilePath), ".http")
-	prefix := baseName + "_"
+	baseName := respfile.BaseName(httpFilePath)
 
 	// Find all response files for this HTTP file
 	entries, err := os.ReadDir(responsesDir)
@@ -194,9 +155,10 @@ func CleanupOldResponses(httpFilePath string, maxResponses int) error {
 
 	// Collect meta files for this HTTP file with their modification times
 	type responseFile struct {
-		metaPath string
-		bodyPath string
-		modTime  time.Time
+		metaPath  string
+		bodyPath  string
+		timestamp time.Time
+		id        string
 	}
 	var responses []responseFile
 
@@ -206,25 +168,19 @@ func CleanupOldResponses(httpFilePath string, maxResponses int) error {
 		}
 
 		name := entry.Name()
-		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".meta") {
+		if filepath.Ext(name) != ".meta" {
 			continue
 		}
-
-		// Get file info for modification time
-		metaPath := filepath.Join(responsesDir, name)
-		info, err := os.Stat(metaPath)
-		if err != nil {
+		id, timestamp, ok := respfile.Match(name, baseName)
+		if !ok {
 			continue
 		}
-
-		// Determine corresponding body file
-		bodyName := strings.TrimSuffix(name, ".meta") + ".body"
-		bodyPath := filepath.Join(responsesDir, bodyName)
 
 		responses = append(responses, responseFile{
-			metaPath: metaPath,
-			bodyPath: bodyPath,
-			modTime:  info.ModTime(),
+			metaPath:  filepath.Join(responsesDir, name),
+			bodyPath:  filepath.Join(responsesDir, id+".body"),
+			timestamp: timestamp,
+			id:        id,
 		})
 	}
 
@@ -233,9 +189,12 @@ func CleanupOldResponses(httpFilePath string, maxResponses int) error {
 		return nil
 	}
 
-	// Sort by modification time (newest first)
+	// Sort by the encoded timestamp (newest first), with a stable ID tie-breaker.
 	sort.Slice(responses, func(i, j int) bool {
-		return responses[i].modTime.After(responses[j].modTime)
+		if responses[i].timestamp.Equal(responses[j].timestamp) {
+			return responses[i].id > responses[j].id
+		}
+		return responses[i].timestamp.After(responses[j].timestamp)
 	})
 
 	// Delete old responses (keep only the first maxResponses)

@@ -48,3 +48,27 @@ func TestParseHTTPFileCRLF(t *testing.T) {
 		t.Errorf("body = %q", req.Body)
 	}
 }
+
+func TestParseHTTPFilePreservesHashAndWhitespaceInBody(t *testing.T) {
+	content := "# comment\nPOST https://example.com/api\nContent-Type: text/plain\n\n  leading\n# body data\ntrailing  \n"
+	path := filepath.Join(t.TempDir(), "body.http")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := ParseHTTPFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "  leading\n# body data\ntrailing  "
+	if req.Body != want {
+		t.Fatalf("body = %q, want %q", req.Body, want)
+	}
+}
+
+func TestParseRequestLine(t *testing.T) {
+	method, url, ok := ParseRequestLine("  get https://example.com  ")
+	if !ok || method != "GET" || url != "https://example.com" {
+		t.Fatalf("ParseRequestLine = %q %q %v", method, url, ok)
+	}
+}

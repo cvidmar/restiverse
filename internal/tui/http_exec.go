@@ -2,37 +2,49 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	httpPkg "github.com/cvidmar/restiverse/internal/http"
+	"github.com/cvidmar/restiverse/internal/respfile"
 	"github.com/cvidmar/restiverse/internal/vars"
 )
 
 // executeHTTPRequest executes an HTTP request from a .http file
 func (m model) executeHTTPRequest() (model, tea.Cmd) {
+	if m.requestRunning {
+		m.statusMessage = "A request is already running — ESC to cancel"
+		return m, nil
+	}
 	if m.currentView != ViewFileBrowser || len(m.fileEntries) == 0 {
 		return m, nil
 	}
 
-	entry := m.fileEntries[m.cursor]
+	entry, ok := m.currentEntry()
+	if !ok {
+		return m, nil
+	}
 	if !entry.IsHTTP {
 		m.errorMessage = "Selected file is not an .http file"
 		return m, nil
 	}
 
-	// Mark request as running
+	ctx, cancel := context.WithTimeout(context.Background(), m.config.Timeout)
+	m.cancelFunc = cancel
 	m.requestRunning = true
 	m.statusMessage = "Executing request..."
 	m.errorMessage = ""
 	m.currentHTTPFile = entry.Path
 
-	return m, m.executeRequestCmd(entry.Path)
+	return m, m.executeRequestCmd(ctx, entry.Path)
 }
 
 // executeRequestCmd returns a command that executes an HTTP request
-func (m model) executeRequestCmd(httpFilePath string) tea.Cmd {
+func (m model) executeRequestCmd(ctx context.Context, httpFilePath string) tea.Cmd {
 	return func() tea.Msg {
 		// Parse HTTP file
 		req, err := httpPkg.ParseHTTPFile(httpFilePath)
@@ -40,59 +52,49 @@ func (m model) executeRequestCmd(httpFilePath string) tea.Cmd {
 			return requestErrorMsg{fmt.Errorf("failed to parse .http file: %w", err)}
 		}
 
-		// Extract variables from the request
-		varNames := vars.ExtractVariables(req.URL)
-		for _, headerVal := range req.Headers {
-			headerVars := vars.ExtractVariables(headerVal)
-			for _, v := range headerVars {
-				found := false
-				for _, existing := range varNames {
-					if existing == v {
-						found = true
-						break
-					}
-				}
-				if !found {
-					varNames = append(varNames, v)
-				}
-			}
-		}
-
-		// Load or get default variable values
-		var varValues vars.VarValues
+		varNames := vars.ExtractRequest(req.URL, req.Headers, req.Body)
 		if len(varNames) > 0 {
-			// Try to load from most recent .meta file
-			varValues, _ = vars.LoadVariableValues(httpFilePath)
-
-			// Fill in missing values with defaults from config
-			defaultValues := vars.GetDefaultValues(m.config.Vars, varNames)
-			if varValues == nil {
-				varValues = defaultValues
-			} else {
-				for name, value := range defaultValues {
-					if _, ok := varValues[name]; !ok {
-						varValues[name] = value
-					}
-				}
+			varValues, err := vars.ResolveValues(httpFilePath, m.config.Vars, varNames)
+			if err != nil {
+				return requestErrorMsg{fmt.Errorf("failed to load variables: %w", err)}
 			}
-
-			// Substitute variables in URL and headers
-			req.URL = vars.SubstituteVariables(req.URL, varValues)
-			for name, value := range req.Headers {
-				req.Headers[name] = vars.SubstituteVariables(value, varValues)
-			}
+			vars.SubstituteRequest(&req.URL, req.Headers, &req.Body, varValues)
 		}
 
-		// Create context with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), m.config.Timeout)
-		defer cancel()
+		record := respfile.NewRecord(httpFilePath, time.Now())
+		if err := os.MkdirAll(filepath.Dir(record.BodyPath), 0o755); err != nil {
+			return requestErrorMsg{fmt.Errorf("failed to create responses directory: %w", err)}
+		}
+		bodyFile, err := os.OpenFile(record.BodyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		if err != nil {
+			return requestErrorMsg{fmt.Errorf("failed to create response body: %w", err)}
+		}
+		if err := bodyFile.Chmod(0o600); err != nil {
+			bodyFile.Close()
+			os.Remove(record.BodyPath)
+			return requestErrorMsg{fmt.Errorf("failed to secure response body: %w", err)}
+		}
 
-		// Execute request
-		resp, err := httpPkg.ExecuteRequest(ctx, req)
+		resp, requestErr := httpPkg.StreamResponseToFile(ctx, req, bodyFile)
+		closeErr := bodyFile.Close()
+		if errors.Is(ctx.Err(), context.Canceled) {
+			os.Remove(record.BodyPath)
+			return requestCancelledMsg{}
+		}
+		if closeErr != nil && requestErr == nil {
+			requestErr = fmt.Errorf("failed to close response body: %w", closeErr)
+		}
+		if requestErr != nil {
+			os.Remove(record.BodyPath)
+		} else if info, statErr := os.Stat(record.BodyPath); statErr == nil && info.Size() == 0 {
+			os.Remove(record.BodyPath)
+		}
 
-		// Save response (even if there was an error)
-		saveErr := httpPkg.SaveResponse(httpFilePath, req, resp, varValues, err)
-		if saveErr != nil {
+		options := httpPkg.MetadataOptions{
+			SensitiveHeaders:     m.config.EffectiveSensitiveHeaders(),
+			SensitiveQueryParams: m.config.EffectiveSensitiveQueryParams(),
+		}
+		if saveErr := httpPkg.SaveResponseMetadata(record, req, resp, requestErr, options); saveErr != nil {
 			return requestErrorMsg{fmt.Errorf("failed to save response: %w", saveErr)}
 		}
 
@@ -105,8 +107,8 @@ func (m model) executeRequestCmd(httpFilePath string) tea.Cmd {
 			}
 		}
 
-		if err != nil {
-			return requestErrorMsg{err}
+		if requestErr != nil {
+			return requestErrorMsg{requestErr}
 		}
 
 		// Build success message
@@ -116,8 +118,7 @@ func (m model) executeRequestCmd(httpFilePath string) tea.Cmd {
 			resp.Duration.Milliseconds())
 
 		return requestCompleteMsg{
-			statusCode: resp.StatusCode,
-			duration:   duration,
+			duration: duration,
 		}
 	}
 }

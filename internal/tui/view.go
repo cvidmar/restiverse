@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/cvidmar/restiverse/internal/config"
 	"github.com/cvidmar/restiverse/internal/files"
+	"github.com/rivo/uniseg"
 )
 
 // View renders the UI based on current model state
@@ -128,8 +129,8 @@ func (m model) renderHelpHints() string {
 		}
 
 		info := fmt.Sprintf("%d files, %d dirs", fileCount-dirCount, dirCount)
-		if m.cursor < len(m.fileEntries) {
-			info += " | " + m.fileEntries[m.cursor].Name
+		if entry, ok := m.currentEntry(); ok {
+			info += " | " + entry.Name
 		}
 		hints = []string{info, "n new", "c config", "R rename", "D duplicate", "X delete", "/ fuzzy", "q quit"}
 
@@ -174,33 +175,37 @@ func (m model) renderFileBrowser() string {
 		}
 	}
 
-	// Add table header if we have .http files
-	if hasHTTPFiles {
-		// Calculate max filename length for better column widths
-		maxNameLen := 20
-		for _, entry := range m.fileEntries {
-			if entry.IsHTTP && len(entry.Name) > maxNameLen {
-				maxNameLen = len(entry.Name)
-			}
+	maxNameWidth := 20
+	for _, entry := range m.fileEntries {
+		if entry.IsHTTP && lipgloss.Width(entry.Name) > maxNameWidth {
+			maxNameWidth = lipgloss.Width(entry.Name)
 		}
-		if maxNameLen > 40 {
-			maxNameLen = 40 // Cap at 40
-		}
-
-		header := fmt.Sprintf("  %-*s  %-6s  %s", maxNameLen, "File", "Method", "URL")
-		rows = append(rows, m.styles.TableHeader.Render(header))
-		rows = append(rows, strings.Repeat("─", m.width-4))
+	}
+	if maxNameWidth > 40 {
+		maxNameWidth = 40
 	}
 
-	for i, entry := range m.fileEntries {
-		rows = append(rows, m.renderFileEntry(i, entry))
+	// Add table header if we have .http files
+	if hasHTTPFiles {
+		header := "  " + padDisplay("File", maxNameWidth) + "  " + padDisplay("Method", 6) + "  URL"
+		rows = append(rows, m.styles.TableHeader.Render(header))
+		rows = append(rows, rule(m.width-4))
+	}
+
+	start := scrollTo(m.browserOffset, m.cursor, len(m.fileEntries), m.browserRows())
+	end := min(start+m.browserRows(), len(m.fileEntries))
+	for i := start; i < end; i++ {
+		rows = append(rows, m.renderFileEntry(i, m.fileEntries[i], maxNameWidth))
+	}
+	if end < len(m.fileEntries) {
+		rows = append(rows, m.styles.HelpText.Render(fmt.Sprintf("… %d more below", len(m.fileEntries)-end)))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
 // renderFileEntry renders a single file or directory entry
-func (m model) renderFileEntry(index int, entry files.FileEntry) string {
+func (m model) renderFileEntry(index int, entry files.FileEntry, maxNameWidth int) string {
 	var style lipgloss.Style
 	isSelected := m.selectedFiles[index]
 	isCursor := index == m.cursor
@@ -224,39 +229,22 @@ func (m model) renderFileEntry(index int, entry files.FileEntry) string {
 
 	// For .http files, use table format
 	if entry.IsHTTP {
-		// Calculate max filename length (same as in renderFileBrowser)
-		maxNameLen := 20
-		for _, e := range m.fileEntries {
-			if e.IsHTTP && len(e.Name) > maxNameLen {
-				maxNameLen = len(e.Name)
-			}
-		}
-		if maxNameLen > 40 {
-			maxNameLen = 40
-		}
-
-		// Truncate name if too long
-		name := entry.Name
-		if len(name) > maxNameLen {
-			name = name[:maxNameLen-3] + "..."
-		}
+		name := truncateDisplay(entry.Name, maxNameWidth)
 
 		// Truncate URL if too long
 		url := entry.URL
-		maxURLLen := m.width - maxNameLen - 20 // Leave space for name, method, and padding
-		if maxURLLen < 20 {
-			maxURLLen = 20
+		maxURLWidth := m.width - maxNameWidth - 20 // Leave space for name, method, and padding
+		if maxURLWidth < 20 {
+			maxURLWidth = 20
 		}
-		if len(url) > maxURLLen {
-			url = url[:maxURLLen-3] + "..."
-		}
+		url = truncateDisplay(url, maxURLWidth)
 
 		method := entry.Method
 		if method == "" {
 			method = "?"
 		}
 
-		row := fmt.Sprintf("%s%-*s  %-6s  %s", prefix, maxNameLen, name, method, url)
+		row := prefix + padDisplay(name, maxNameWidth) + "  " + padDisplay(method, 6) + "  " + url
 		return style.Render(row)
 	}
 
@@ -280,11 +268,16 @@ func (m model) renderHistory() string {
 	// Header
 	header := fmt.Sprintf("%-20s %-8s %-10s %-10s", "DateTime", "Status", "Duration", "Size")
 	rows = append(rows, m.styles.TableHeader.Render(header))
-	rows = append(rows, strings.Repeat("─", m.width-4))
+	rows = append(rows, rule(m.width-4))
 
 	// Rows
-	for i, resp := range m.responses {
-		rows = append(rows, m.renderResponseRow(i, resp))
+	start := scrollTo(m.historyOffset, m.historyCursor, len(m.responses), m.historyRows())
+	end := min(start+m.historyRows(), len(m.responses))
+	for i := start; i < end; i++ {
+		rows = append(rows, m.renderResponseRow(i, m.responses[i]))
+	}
+	if end < len(m.responses) {
+		rows = append(rows, m.styles.HelpText.Render(fmt.Sprintf("… %d more below", len(m.responses)-end)))
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
@@ -399,20 +392,26 @@ func (m model) renderFuzzyFinder() string {
 	if len(m.searchResults) == 0 {
 		items = append(items, m.styles.HelpText.Render("No results"))
 	} else {
-		for i, result := range m.searchResults {
+		start := scrollTo(m.searchOffset, m.searchCursor, len(m.searchResults), m.searchRows())
+		end := min(start+m.searchRows(), len(m.searchResults))
+		for i := start; i < end; i++ {
+			result := m.searchResults[i]
 			var style lipgloss.Style
-			if i == m.cursor {
+			if i == m.searchCursor {
 				style = m.styles.SelectedItem
 			} else {
 				style = m.styles.File
 			}
 
 			prefix := "  "
-			if i == m.cursor {
+			if i == m.searchCursor {
 				prefix = "> "
 			}
 
 			items = append(items, style.Render(prefix+result.Name))
+		}
+		if end < len(m.searchResults) {
+			items = append(items, m.styles.HelpText.Render(fmt.Sprintf("… %d more below", len(m.searchResults)-end)))
 		}
 	}
 
@@ -518,7 +517,7 @@ func (m model) renderConfirmModal() string {
 
 // renderVariableSelect renders the variable selection modal
 func (m model) renderVariableSelect() string {
-	if len(m.varNames) == 0 {
+	if len(m.varNames) == 0 || m.varCurrentIdx < 0 || m.varCurrentIdx >= len(m.varNames) {
 		return m.styles.Modal.Render("No variables to configure")
 	}
 
@@ -575,3 +574,43 @@ func (m model) renderVariableSelect() string {
 	)
 }
 
+func rule(width int) string {
+	if width < 1 {
+		return ""
+	}
+	return strings.Repeat("─", width)
+}
+
+func padDisplay(value string, width int) string {
+	if padding := width - lipgloss.Width(value); padding > 0 {
+		return value + strings.Repeat(" ", padding)
+	}
+	return value
+}
+
+func truncateDisplay(value string, width int) string {
+	if width < 1 {
+		return ""
+	}
+	if lipgloss.Width(value) <= width {
+		return value
+	}
+	const suffix = "..."
+	if width <= lipgloss.Width(suffix) {
+		return strings.Repeat(".", width)
+	}
+	remaining := width - lipgloss.Width(suffix)
+	var builder strings.Builder
+	graphemes := uniseg.NewGraphemes(value)
+	used := 0
+	for graphemes.Next() {
+		cluster := graphemes.Str()
+		clusterWidth := uniseg.StringWidth(cluster)
+		if used+clusterWidth > remaining {
+			break
+		}
+		builder.WriteString(cluster)
+		used += clusterWidth
+	}
+	return builder.String() + suffix
+}

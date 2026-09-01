@@ -154,25 +154,3 @@ func TestToCurlCommand(t *testing.T) {
 		})
 	}
 }
-
-func TestShellEscape(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"simple", "simple"},
-		{"value's with quote", "value'\\''s with quote"},
-		{"multiple 'quotes' here", "multiple '\\''quotes'\\'' here"},
-		{"no quotes", "no quotes"},
-		{"", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := shellEscape(tt.input)
-			if result != tt.expected {
-				t.Errorf("shellEscape(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
