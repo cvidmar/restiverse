@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,44 @@ func TestExtractRequestIncludesBodyInStableOrder(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("ExtractRequest = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestSubstituteRequestReportsUnresolvedVariables(t *testing.T) {
+	url := "https://{host}/api"
+	headers := map[string]string{"Authorization": "Bearer {token}"}
+	body := `{"id":"{id}"}`
+
+	err := SubstituteRequest(&url, headers, &body, VarValues{"host": "example.com"})
+	if err == nil {
+		t.Fatal("SubstituteRequest: expected an error for unresolved variables")
+	}
+	if got := err.Error(); !strings.Contains(got, "token") || !strings.Contains(got, "id") {
+		t.Errorf("error = %q, want it to name token and id", got)
+	}
+	// Nothing is substituted when a value is missing, so no half-built request is sent.
+	if url != "https://{host}/api" {
+		t.Errorf("url = %q, want it left untouched", url)
+	}
+}
+
+func TestSubstituteRequestSubstitutesWhenAllResolved(t *testing.T) {
+	url := "https://{host}/api"
+	headers := map[string]string{"Authorization": "Bearer {token}"}
+	body := `{"id":"{id}"}`
+
+	values := VarValues{"host": "example.com", "token": "abc123", "id": "42"}
+	if err := SubstituteRequest(&url, headers, &body, values); err != nil {
+		t.Fatalf("SubstituteRequest: %v", err)
+	}
+	if url != "https://example.com/api" {
+		t.Errorf("url = %q", url)
+	}
+	if headers["Authorization"] != "Bearer abc123" {
+		t.Errorf("authorization = %q", headers["Authorization"])
+	}
+	if body != `{"id":"42"}` {
+		t.Errorf("body = %q", body)
 	}
 }
 

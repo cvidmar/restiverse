@@ -58,7 +58,9 @@ func (m model) executeRequestCmd(ctx context.Context, httpFilePath string) tea.C
 			if err != nil {
 				return requestErrorMsg{fmt.Errorf("failed to load variables: %w", err)}
 			}
-			vars.SubstituteRequest(&req.URL, req.Headers, &req.Body, varValues)
+			if err := vars.SubstituteRequest(&req.URL, req.Headers, &req.Body, varValues); err != nil {
+				return requestErrorMsg{err}
+			}
 		}
 
 		record := respfile.NewRecord(httpFilePath, time.Now())

@@ -66,6 +66,40 @@ func TestParseHTTPFilePreservesHashAndWhitespaceInBody(t *testing.T) {
 	}
 }
 
+func TestParseHTTPFileRejectsHeadersPushedIntoBody(t *testing.T) {
+	// A blank line directly after the request line makes every header below it body.
+	content := "POST https://example.com/api\n\nAuthorization: Bearer token123\nContent-Type: application/json\n\n{\"a\":1}\n"
+	path := filepath.Join(t.TempDir(), "blankline.http")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := ParseHTTPFile(path)
+	if err == nil {
+		t.Fatal("ParseHTTPFile: expected an error for headers swallowed into the body")
+	}
+	if !strings.Contains(err.Error(), "blank line") {
+		t.Errorf("error = %q, want it to mention the blank line", err)
+	}
+}
+
+func TestParseHTTPFileAllowsHeaderlessBody(t *testing.T) {
+	// A request with no headers is legal; only a header-shaped first line is rejected.
+	content := "POST https://example.com/api\n\n{\"a\":1}\n"
+	path := filepath.Join(t.TempDir(), "headerless.http")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := ParseHTTPFile(path)
+	if err != nil {
+		t.Fatalf("ParseHTTPFile: %v", err)
+	}
+	if req.Body != `{"a":1}` {
+		t.Errorf("body = %q", req.Body)
+	}
+}
+
 func TestParseRequestLine(t *testing.T) {
 	method, url, ok := ParseRequestLine("  get https://example.com  ")
 	if !ok || method != "GET" || url != "https://example.com" {

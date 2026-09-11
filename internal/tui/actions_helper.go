@@ -401,7 +401,10 @@ func (m model) copyAsCurl() (model, tea.Cmd) {
 		return m, nil
 	}
 
-	vars.SubstituteRequest(&req.URL, req.Headers, &req.Body, varValues)
+	if err := vars.SubstituteRequest(&req.URL, req.Headers, &req.Body, varValues); err != nil {
+		m.errorMessage = err.Error()
+		return m, nil
+	}
 
 	// Generate curl command
 	curlCmd := req.ToCurlCommand()

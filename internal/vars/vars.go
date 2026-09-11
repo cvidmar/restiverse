@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/cvidmar/restiverse/internal/respfile"
@@ -86,8 +87,25 @@ func ExtractRequest(url string, headers map[string]string, body string) []string
 	return names
 }
 
-// SubstituteRequest replaces variables throughout a parsed request.
-func SubstituteRequest(url *string, headers map[string]string, body *string, values VarValues) {
+// SubstituteRequest replaces variables throughout a parsed request. A placeholder with no
+// value is reported instead of being sent verbatim: an unresolved key or host reaches the
+// server as literal braces and comes back as an opaque 401 or 404.
+func SubstituteRequest(url *string, headers map[string]string, body *string, values VarValues) error {
+	var bodyText string
+	if body != nil {
+		bodyText = *body
+	}
+
+	var missing []string
+	for _, name := range ExtractRequest(*url, headers, bodyText) {
+		if _, ok := values[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("unresolved variable(s): %s", strings.Join(missing, ", "))
+	}
+
 	*url = SubstituteVariables(*url, values)
 	for name, value := range headers {
 		headers[name] = SubstituteVariables(value, values)
@@ -95,6 +113,7 @@ func SubstituteRequest(url *string, headers map[string]string, body *string, val
 	if body != nil {
 		*body = SubstituteVariables(*body, values)
 	}
+	return nil
 }
 
 // GetDefaultValues returns the first value for each variable from config

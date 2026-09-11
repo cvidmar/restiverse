@@ -3,8 +3,14 @@ package http
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
+
+// headerLikeBodyStart matches a body whose first line reads as an HTTP header. That means
+// the blank line separating headers from body was placed directly after the request line,
+// so every header below it was swallowed into the body and never sent.
+var headerLikeBodyStart = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*:[ \t]`)
 
 // HTTPRequest represents a parsed HTTP request from a .http file
 type HTTPRequest struct {
@@ -79,6 +85,10 @@ func ParseHTTPFile(filePath string) (*HTTPRequest, error) {
 
 	// Join body lines
 	body := strings.TrimSuffix(strings.Join(bodyLines, "\n"), "\n")
+
+	if len(headers) == 0 && headerLikeBodyStart.MatchString(strings.TrimSpace(body)) {
+		return nil, fmt.Errorf("no headers parsed: the body starts with what looks like a header — remove the blank line between the request line and the headers")
+	}
 
 	return &HTTPRequest{
 		Method:  method,
